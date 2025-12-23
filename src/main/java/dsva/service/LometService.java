@@ -8,17 +8,47 @@ import java.util.*;
 @Service
 public class LometService {
     @Autowired private LogicalClockService logger;
+
+    // Set hran v globálním Wait-For Graphu
     private final Set<DependencyEdge> globalWFG = Collections.synchronizedSet(new HashSet<>());
 
+    // Metoda pro přidání jedné konkrétní hrany (používá ComputationService při žádosti o práci)
+    public void addWaitEdge(String fromId, String toId) {
+        DependencyEdge newEdge = new DependencyEdge(fromId, toId, logger.getTime());
+        globalWFG.add(newEdge);
+        logger.log("Přidána hrana čekání: " + fromId + " -> " + toId);
+        checkDeadlock();
+    }
+
+    // Metoda pro odebrání hrany (používá ComputationService, když uzel dostane práci a přestane čekat)
+    public void removeWaitEdge(String fromId, String toId) {
+        boolean removed = globalWFG.removeIf(edge ->
+                edge.getFromId().equals(fromId) && edge.getToId().equals(toId));
+
+        if (removed) {
+            logger.log("Hrana čekání odstraněna: " + fromId + " -> " + toId);
+        }
+    }
+
+    // Alternativní metoda pro odebrání všech hran, kde uzel figuruje jako čekající (From)
+    public void removeAllWaitEdgesFrom(String fromId) {
+        globalWFG.removeIf(edge -> edge.getFromId().equals(fromId));
+        logger.log("Odstraněny všechny odchozí hrany pro uzel: " + fromId);
+    }
+
+    // Tato metoda už v kódu byla - slouží pro synchronizaci grafu mezi uzly
     public void addEdges(List<DependencyEdge> newEdges) {
         globalWFG.addAll(newEdges);
         checkDeadlock();
     }
 
-    private void checkDeadlock() {
+    public void checkDeadlock() {
+        // Logika pro detekci cyklu (ponech stejnou, jakou jsi měl)
         Map<String, List<String>> adj = new HashMap<>();
-        for (DependencyEdge edge : globalWFG) {
-            adj.computeIfAbsent(edge.getFromId(), k -> new ArrayList<>()).add(edge.getToId());
+        synchronized (globalWFG) {
+            for (DependencyEdge edge : globalWFG) {
+                adj.computeIfAbsent(edge.getFromId(), k -> new ArrayList<>()).add(edge.getToId());
+            }
         }
 
         for (String node : adj.keySet()) {
@@ -46,5 +76,9 @@ public class LometService {
         return false;
     }
 
-    public List<DependencyEdge> getGlobalWFG() { return new ArrayList<>(globalWFG); }
+    public List<DependencyEdge> getGlobalWFG() {
+        synchronized (globalWFG) {
+            return new ArrayList<>(globalWFG);
+        }
+    }
 }
