@@ -21,7 +21,7 @@ public class ComputationService {
     public void initiateWork(int amount) {
         this.localWorkLoad = amount;
         this.isActive = true;
-        logger.log("Výpočet zahájen. Lokální zátěž: " + amount);
+        logger.log("Calculation started. Local load: " + amount);
     }
 
     // Automatický proces výpočtu (běží každé 2 sekundy)
@@ -29,7 +29,7 @@ public class ComputationService {
     public void doWork() {
         if (isActive && localWorkLoad > 0) {
             localWorkLoad--;
-            logger.log("Pracuji... zbývá: " + localWorkLoad);
+            logger.log("Working... lasts: " + localWorkLoad);
 
             // Náhodně zkusíme předat práci dál (simulace distribuce)
             if (localWorkLoad > 5 && random.nextInt(100) < 20) {
@@ -38,7 +38,7 @@ public class ComputationService {
 
             if (localWorkLoad == 0) {
                 isActive = false;
-                logger.log("Práce dokončena. Uzel je IDLE.");
+                logger.log("Work ended. Node is IDLE.");
             }
         } else if (!isActive && !topology.getNeighbors().isEmpty() && random.nextInt(100) < 10) {
             // Pokud nic nedělám, občas si zažádám o práci (vytváří hrany pro Lomet)
@@ -52,7 +52,7 @@ public class ComputationService {
             localWorkLoad -= part;
             NodeInfo recipient = topology.getRandomNeighbor();
             if (recipient != null) {
-                logger.log("Předávám " + part + " jednotek práce uzlu " + recipient.getId());
+                logger.log("giving " + part + " parts of work to node " + recipient.getId());
                 network.sendPost(recipient.getBaseUrl() + "/api/work/receive",
                         new WorkUnit("task-" + System.currentTimeMillis(), part, topology.getMyId()));
             }
@@ -62,7 +62,7 @@ public class ComputationService {
     public void requestWorkFromNeighbor() {
         NodeInfo target = topology.getRandomNeighbor();
         if (target != null) {
-            logger.log("Žádám o práci u " + target.getId());
+            logger.log("Asking for work " + target.getId());
             // Lomet: Přidáme hranu a musíme ji rozeslat všem (globální algoritmus)
             lomet.addWaitEdge(topology.getMyId(), target.getId());
             broadcastWFG();
@@ -76,7 +76,7 @@ public class ComputationService {
         // Přestáváme čekat na uzel, který nám poslal práci
         lomet.removeWaitEdge(topology.getMyId(), unit.getSenderId());
         broadcastWFG();
-        logger.log("Přijata práce (" + unit.getLoad() + ") od " + unit.getSenderId());
+        logger.log("Received work (" + unit.getLoad() + ") from " + unit.getSenderId());
     }
 
     private void broadcastWFG() {

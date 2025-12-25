@@ -16,7 +16,7 @@ public class LometService {
     public void addWaitEdge(String fromId, String toId) {
         DependencyEdge newEdge = new DependencyEdge(fromId, toId, logger.getTime());
         globalWFG.add(newEdge);
-        logger.log("Přidána hrana čekání: " + fromId + " -> " + toId);
+        logger.log("Wait edge is added : " + fromId + " -> " + toId);
         checkDeadlock();
     }
 
@@ -26,14 +26,14 @@ public class LometService {
                 edge.getFromId().equals(fromId) && edge.getToId().equals(toId));
 
         if (removed) {
-            logger.log("Hrana čekání odstraněna: " + fromId + " -> " + toId);
+            logger.log("HWait edge is removed: " + fromId + " -> " + toId);
         }
     }
 
     // Alternativní metoda pro odebrání všech hran, kde uzel figuruje jako čekající (From)
     public void removeAllWaitEdgesFrom(String fromId) {
         globalWFG.removeIf(edge -> edge.getFromId().equals(fromId));
-        logger.log("Odstraněny všechny odchozí hrany pro uzel: " + fromId);
+        logger.log("Deleted all waited edges from node: " + fromId);
     }
 
     // Tato metoda už v kódu byla - slouží pro synchronizaci grafu mezi uzly
@@ -53,7 +53,7 @@ public class LometService {
 
         for (String node : adj.keySet()) {
             if (hasCycle(node, adj, new HashSet<>(), new HashSet<>())) {
-                logger.log("!!! DETEKVÁNO UVÁZNUTÍ (DEADLOCK) V GRAFU !!!");
+                logger.log("!!! DEADLOCK IS DETECTED !!!");
                 return;
             }
         }

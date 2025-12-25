@@ -19,7 +19,7 @@ public class ComputationController {
     @PostMapping("/start")
     public String start(@RequestParam int amount) {
         computeService.initiateWork(amount);
-        return "Výpočet spuštěn";
+        return "Calculation started";
     }
 
     @PostMapping("/receive")
@@ -31,7 +31,7 @@ public class ComputationController {
     @PostMapping("/request-grant")
     public void grantWork(@RequestBody String requesterId, @RequestHeader("X-Logical-Time") long time) {
         logger.update(time);
-        logger.log("Uzel " + requesterId + " mě žádá o práci.");
+        logger.log("Node " + requesterId + " asking me for job");
         computeService.passWork();
     }
 

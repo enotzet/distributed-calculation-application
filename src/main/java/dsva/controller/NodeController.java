@@ -23,7 +23,7 @@ public class NodeController {
         // Pošleme mu naše info, aby si nás přidal taky
         network.sendPost(newNode.getBaseUrl() + "/api/register",
                 new NodeInfo("localhost", getMyPort()));
-        return "Uzel připojen";
+        return "Node connected";
     }
 
     @PostMapping("/register")
@@ -35,7 +35,7 @@ public class NodeController {
     // Odhlášení ze systému (Graceful Leave)
     @PostMapping("/leave")
     public void leave() {
-        clock.log("Odpojuji se ze systému.");
+        clock.log("Disconnecting from system");
         String myId = topology.getMyId();
         for (NodeInfo n : topology.getNeighbors()) {
             network.sendPost(n.getBaseUrl() + "/api/unregister/" + myId, null);
@@ -57,7 +57,7 @@ public class NodeController {
 
     @DeleteMapping("/kill")
     public void kill() {
-        clock.log("Okamžité ukončení (bez odhlášení).");
+        clock.log("Instant end(kill command)");
         System.exit(0);
     }
 

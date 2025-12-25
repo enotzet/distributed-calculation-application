@@ -34,13 +34,13 @@ public class TopologyService {
     public void addNeighbor(NodeInfo node) {
         if (!node.getId().equals(getMyId()) && !neighbors.contains(node)) {
             neighbors.add(node);
-            logger.log("Soused přidán: " + node.getId() + ". Celkem sousedů: " + neighbors.size());
+            logger.log("Neighbour added: " + node.getId() + ". Count of neighbours: " + neighbors.size());
         }
     }
 
     public void removeNeighbor(String nodeId) {
         neighbors.removeIf(n -> n.getId().equals(nodeId));
-        logger.log("Soused odebrán: " + nodeId);
+        logger.log("Neighbour is removed: " + nodeId);
     }
 
     public List<NodeInfo> getNeighbors() {

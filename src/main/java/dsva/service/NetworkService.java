@@ -23,7 +23,7 @@ public class NetworkService {
                 HttpEntity<Object> entity = new HttpEntity<>(body, headers);
                 rest.postForEntity(url, entity, String.class);
             } catch (Exception e) {
-                clock.log("Chyba při odesílání na " + url);
+                clock.log("Error while sending for url " + url);
             }
         }).start();
     }
