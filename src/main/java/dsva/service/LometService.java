@@ -7,7 +7,8 @@ import java.util.*;
 
 @Service
 public class LometService {
-    @Autowired private LogicalClockService logger;
+    @Autowired
+    private LogicalClockService logger;
 
     // Set hran v globálním Wait-For Graphu
     private final Set<DependencyEdge> globalWFG = Collections.synchronizedSet(new HashSet<>());
@@ -15,9 +16,13 @@ public class LometService {
     // Metoda pro přidání jedné konkrétní hrany (používá ComputationService při žádosti o práci)
     public void addWaitEdge(String fromId, String toId) {
         DependencyEdge newEdge = new DependencyEdge(fromId, toId, logger.getTime());
-        globalWFG.add(newEdge);
-        logger.log("Wait edge is added : " + fromId + " -> " + toId);
-        checkDeadlock();
+
+        boolean isNew = globalWFG.add(newEdge);
+
+        if (isNew) {
+            logger.log("Wait edge is added : " + fromId + " -> " + toId);
+            checkDeadlock();
+        }
     }
 
     // Metoda pro odebrání hrany (používá ComputationService, když uzel dostane práci a přestane čekat)
@@ -26,7 +31,7 @@ public class LometService {
                 edge.getFromId().equals(fromId) && edge.getToId().equals(toId));
 
         if (removed) {
-            logger.log("HWait edge is removed: " + fromId + " -> " + toId);
+            logger.log("Wait edge is removed: " + fromId + " -> " + toId);
         }
     }
 
@@ -52,9 +57,9 @@ public class LometService {
         }
 
         for (String node : adj.keySet()) {
-            if (hasCycle(node, adj, new HashSet<>(), new HashSet<>())) {
-                logger.log("!!! DEADLOCK IS DETECTED !!!");
-                return;
+            if (hasCycle(node, adj, new HashSet<>(), new LinkedHashSet<>())) {
+                logger.log("!!! DEADLOCK IS DETECTED !!! Node involved: " + node);
+                return; // Vypíšeme jen jednou pro každou kontrolu
             }
         }
     }

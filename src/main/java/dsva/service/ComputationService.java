@@ -21,28 +21,27 @@ public class ComputationService {
     public void initiateWork(int amount) {
         this.localWorkLoad = amount;
         this.isActive = true;
+        lomet.removeAllWaitEdgesFrom(topology.getMyId());
+        broadcastWFG();
         logger.log("Calculation started. Local load: " + amount);
     }
 
-    // Automatický proces výpočtu (běží každé 2 sekundy)
-    @Scheduled(fixedDelay = 2000)
+    @Scheduled(fixedDelay = 5000)
     public void doWork() {
         if (isActive && localWorkLoad > 0) {
             localWorkLoad--;
             logger.log("Working... lasts: " + localWorkLoad);
-
-            // Náhodně zkusíme předat práci dál (simulace distribuce)
-            if (localWorkLoad > 5 && random.nextInt(100) < 20) {
+            if (localWorkLoad > 5 && random.nextInt(100) < 20)
                 passWork();
-            }
-
             if (localWorkLoad == 0) {
                 isActive = false;
                 logger.log("Work ended. Node is IDLE.");
             }
-        } else if (!isActive && !topology.getNeighbors().isEmpty() && random.nextInt(100) < 10) {
-            // Pokud nic nedělám, občas si zažádám o práci (vytváří hrany pro Lomet)
-            requestWorkFromNeighbor();
+        } else if (!isActive && !topology.getNeighbors().isEmpty()) {
+            // Žádáme o práci jen pokud už nečekáme (isWaiting)
+            if (!isWaiting()) {
+                requestWorkFromNeighbor();
+            }
         }
     }
 
@@ -83,6 +82,12 @@ public class ComputationService {
         for (NodeInfo n : topology.getNeighbors()) {
             network.sendPost(n.getBaseUrl() + "/api/lomet/update", lomet.getGlobalWFG());
         }
+    }
+
+    private boolean isWaiting() {
+        // Pokud v globálním WFG existuje hrana, kde já (myId) na někoho čekám
+        return lomet.getGlobalWFG().stream()
+                .anyMatch(edge -> edge.getFromId().equals(topology.getMyId()));
     }
 
     public boolean isActive() { return isActive; }
