@@ -1,10 +1,11 @@
-// file: src/main/java/dsva/service/ComputationService.java
 package dsva.service;
 
 import dsva.model.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+
+import java.util.List;
 import java.util.Random;
 
 @Service
@@ -26,7 +27,7 @@ public class ComputationService {
         logger.log("Calculation started. Local load: " + amount);
     }
 
-    @Scheduled(fixedDelay = 5000)
+    @Scheduled(fixedDelay = 2000)
     public void doWork() {
         if (isActive && localWorkLoad > 0) {
             localWorkLoad--;
@@ -62,7 +63,6 @@ public class ComputationService {
         NodeInfo target = topology.getRandomNeighbor();
         if (target != null) {
             logger.log("Asking for work " + target.getId());
-            // Lomet: Přidáme hranu a musíme ji rozeslat všem (globální algoritmus)
             lomet.addWaitEdge(topology.getMyId(), target.getId());
             broadcastWFG();
             network.sendPost(target.getBaseUrl() + "/api/work/request-grant", topology.getMyId());
@@ -72,20 +72,19 @@ public class ComputationService {
     public void receiveWork(WorkUnit unit) {
         this.localWorkLoad += unit.getLoad();
         this.isActive = true;
-        // Přestáváme čekat na uzel, který nám poslal práci
         lomet.removeWaitEdge(topology.getMyId(), unit.getSenderId());
         broadcastWFG();
         logger.log("Received work (" + unit.getLoad() + ") from " + unit.getSenderId());
     }
 
     private void broadcastWFG() {
+        List<DependencyEdge> myEdges = lomet.getGlobalWFG();
         for (NodeInfo n : topology.getNeighbors()) {
-            network.sendPost(n.getBaseUrl() + "/api/lomet/update", lomet.getGlobalWFG());
+            network.sendPost(n.getBaseUrl() + "/api/lomet/update?senderId=" + topology.getMyId(), myEdges);
         }
     }
 
     private boolean isWaiting() {
-        // Pokud v globálním WFG existuje hrana, kde já (myId) na někoho čekám
         return lomet.getGlobalWFG().stream()
                 .anyMatch(edge -> edge.getFromId().equals(topology.getMyId()));
     }

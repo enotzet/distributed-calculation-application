@@ -4,62 +4,75 @@ import dsva.model.DependencyEdge;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 public class LometService {
     @Autowired
-    private LogicalClockService logger;
+    private LogicalClockService clock;
 
-    // Set hran v globálním Wait-For Graphu
-    private final Set<DependencyEdge> globalWFG = Collections.synchronizedSet(new HashSet<>());
+    private final Map<String, DependencyEdge> globalWFG = Collections.synchronizedMap(new HashMap<>());
 
-    // Metoda pro přidání jedné konkrétní hrany (používá ComputationService při žádosti o práci)
+    private final Map<String, Long> lastNodeUpdateClock = Collections.synchronizedMap(new HashMap<>());
+
+    private String getEdgeKey(String from, String to) {
+        return from + "->" + to;
+    }
+
     public void addWaitEdge(String fromId, String toId) {
-        DependencyEdge newEdge = new DependencyEdge(fromId, toId, logger.getTime());
-
-        boolean isNew = globalWFG.add(newEdge);
-
-        if (isNew) {
-            logger.log("Wait edge is added : " + fromId + " -> " + toId);
-            checkDeadlock();
-        }
+        long currentTime = clock.tick();
+        DependencyEdge newEdge = new DependencyEdge(fromId, toId, currentTime);
+        globalWFG.put(getEdgeKey(fromId, toId), newEdge);
+        clock.log("Wait edge added: " + fromId + " -> " + toId);
+        checkDeadlock();
     }
 
-    // Metoda pro odebrání hrany (používá ComputationService, když uzel dostane práci a přestane čekat)
     public void removeWaitEdge(String fromId, String toId) {
-        boolean removed = globalWFG.removeIf(edge ->
-                edge.getFromId().equals(fromId) && edge.getToId().equals(toId));
-
-        if (removed) {
-            logger.log("Wait edge is removed: " + fromId + " -> " + toId);
+        if (globalWFG.remove(getEdgeKey(fromId, toId)) != null) {
+            clock.log("Wait edge removed: " + fromId + " -> " + toId);
         }
     }
 
-    // Alternativní metoda pro odebrání všech hran, kde uzel figuruje jako čekající (From)
     public void removeAllWaitEdgesFrom(String fromId) {
-        globalWFG.removeIf(edge -> edge.getFromId().equals(fromId));
-        logger.log("Deleted all waited edges from node: " + fromId);
+        globalWFG.entrySet().removeIf(entry -> entry.getValue().getFromId().equals(fromId));
+        clock.log("Deleted all edges from node: " + fromId);
     }
 
-    // Tato metoda už v kódu byla - slouží pro synchronizaci grafu mezi uzly
-    public void addEdges(List<DependencyEdge> newEdges) {
-        globalWFG.addAll(newEdges);
+    public void addEdges(String senderId, List<DependencyEdge> incomingEdges, long remoteClock) {
+        synchronized (globalWFG) {
+            lastNodeUpdateClock.put(senderId, remoteClock);
+
+            if (incomingEdges.isEmpty()) {
+                clock.log("Node " + senderId + " is no longer waiting for anyone. Updating global WFG.");
+            }
+
+            globalWFG.entrySet().removeIf(entry ->
+                    entry.getValue().getFromId().equals(senderId) && incomingEdges.stream().noneMatch(e -> e.getToId().equals(entry.getValue().getToId()))
+            );
+
+            for (DependencyEdge incoming : incomingEdges) {
+                String key = getEdgeKey(incoming.getFromId(), incoming.getToId());
+                DependencyEdge existing = globalWFG.get(key);
+                if (existing == null || incoming.getLogicalTime() > existing.getLogicalTime()) {
+                    globalWFG.put(key, incoming);
+                }
+            }
+        }
         checkDeadlock();
     }
 
     public void checkDeadlock() {
-        // Logika pro detekci cyklu (ponech stejnou, jakou jsi měl)
         Map<String, List<String>> adj = new HashMap<>();
         synchronized (globalWFG) {
-            for (DependencyEdge edge : globalWFG) {
+            for (DependencyEdge edge : globalWFG.values()) {
                 adj.computeIfAbsent(edge.getFromId(), k -> new ArrayList<>()).add(edge.getToId());
             }
         }
 
         for (String node : adj.keySet()) {
             if (hasCycle(node, adj, new HashSet<>(), new LinkedHashSet<>())) {
-                logger.log("!!! DEADLOCK IS DETECTED !!! Node involved: " + node);
-                return; // Vypíšeme jen jednou pro každou kontrolu
+                clock.log("!!! DEADLOCK DETECTED !!! Nodes in cycle: " + node);
+                return;
             }
         }
     }
@@ -67,10 +80,8 @@ public class LometService {
     private boolean hasCycle(String curr, Map<String, List<String>> adj, Set<String> visited, Set<String> stack) {
         if (stack.contains(curr)) return true;
         if (visited.contains(curr)) return false;
-
         visited.add(curr);
         stack.add(curr);
-
         List<String> neighbors = adj.get(curr);
         if (neighbors != null) {
             for (String neighbor : neighbors) {
@@ -82,8 +93,6 @@ public class LometService {
     }
 
     public List<DependencyEdge> getGlobalWFG() {
-        synchronized (globalWFG) {
-            return new ArrayList<>(globalWFG);
-        }
+        return new ArrayList<>(globalWFG.values());
     }
 }

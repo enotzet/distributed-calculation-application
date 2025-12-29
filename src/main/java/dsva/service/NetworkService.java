@@ -15,15 +15,17 @@ public class NetworkService {
     private final int DELAY_MS = 1000;
 
     public void sendPost(String url, Object body) {
+        long timeToSend = clock.tick();
+
         new Thread(() -> {
             try {
                 Thread.sleep(DELAY_MS);
                 HttpHeaders headers = new HttpHeaders();
-                headers.set("X-Logical-Time", String.valueOf(clock.getTime()));
+                headers.set("X-Logical-Time", String.valueOf(timeToSend));
                 HttpEntity<Object> entity = new HttpEntity<>(body, headers);
                 rest.postForEntity(url, entity, String.class);
             } catch (Exception e) {
-                clock.log("Error while sending for url " + url);
+                System.err.println("Network error: " + url);
             }
         }).start();
     }

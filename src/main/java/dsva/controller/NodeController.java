@@ -4,7 +4,12 @@ package dsva.controller;
 import dsva.model.*;
 import dsva.service.*;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.client.RestTemplate;
+
 import java.util.*;
 
 @RestController
@@ -16,20 +21,42 @@ public class NodeController {
     @Autowired private NetworkService network;
 
     @PostMapping("/join")
-    public String join(@RequestBody NodeInfo newNode) {
+    public String join(@RequestBody NodeInfo bootstrapNode) {
+        topology.addNeighbor(bootstrapNode);
         clock.tick();
-        // Přidáme souseda lokálně
-        topology.addNeighbor(newNode);
-        // Pošleme mu naše info, aby si nás přidal taky
-        network.sendPost(newNode.getBaseUrl() + "/api/register",
-                new NodeInfo("localhost", getMyPort()));
-        return "Node connected";
+
+        try {
+            RestTemplate restTemplate = new RestTemplate();
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("X-Logical-Time", String.valueOf(clock.getTime()));
+            HttpEntity<NodeInfo> entity = new HttpEntity<>(new NodeInfo("localhost", getMyPort()), headers);
+
+            ResponseEntity<NodeInfo[]> response = restTemplate.postForEntity(
+                    bootstrapNode.getBaseUrl() + "/api/register", entity, NodeInfo[].class);
+
+            if (response.getBody() != null) {
+                for (NodeInfo n : response.getBody()) {
+                    topology.addNeighbor(n);
+                }
+            }
+            return "Join successful. Neighbors count: " + topology.getNeighbors().size();
+        } catch (Exception e) {
+            return "Join failed: " + e.getMessage();
+        }
     }
 
     @PostMapping("/register")
-    public void register(@RequestBody NodeInfo node, @RequestHeader("X-Logical-Time") long remoteTime) {
-        clock.update(remoteTime);
-        topology.addNeighbor(node);
+    public List<NodeInfo> register(@RequestBody NodeInfo newNode, @RequestHeader("X-Logical-Time") long time) {
+        clock.update(time);
+
+        if (!topology.getNeighbors().contains(newNode)) {
+            for (NodeInfo neighbor : topology.getNeighbors()) {
+                network.sendPost(neighbor.getBaseUrl() + "/api/register-proxy", newNode);
+            }
+            topology.addNeighbor(newNode);
+        }
+
+        return topology.getNeighbors();
     }
 
     // Odhlášení ze systému (Graceful Leave)
@@ -43,6 +70,12 @@ public class NodeController {
         topology.getNeighbors().clear();
     }
 
+    @PostMapping("/register-proxy")
+    public void registerProxy(@RequestBody NodeInfo newNode, @RequestHeader("X-Logical-Time") long time) {
+        clock.update(time);
+        topology.addNeighbor(newNode);
+    }
+
     @PostMapping("/unregister/{id}")
     public void unregister(@PathVariable String id, @RequestHeader("X-Logical-Time") long remoteTime) {
         clock.update(remoteTime);
@@ -50,9 +83,11 @@ public class NodeController {
     }
 
     @PostMapping("/lomet/update")
-    public void updateLomet(@RequestBody List<DependencyEdge> edges, @RequestHeader("X-Logical-Time") long remoteTime) {
+    public void updateLomet(@RequestBody List<DependencyEdge> edges,
+            @RequestParam String senderId,
+            @RequestHeader("X-Logical-Time") long remoteTime) {
         clock.update(remoteTime);
-        lomet.addEdges(edges);
+        lomet.addEdges(senderId, edges, remoteTime);
     }
 
     @DeleteMapping("/kill")
