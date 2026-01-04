@@ -18,6 +18,7 @@ public class NodeController {
     @Autowired private LogicalClockService clock;
     @Autowired private TopologyService topology;
     @Autowired private LometService lomet;
+    @Autowired private LockService lockService;
     @Autowired private NetworkService network;
 
     @PostMapping("/join")
@@ -72,7 +73,26 @@ public class NodeController {
         return topology.getNeighbors();
     }
 
-    // Odhlášení ze systému (Graceful Leave)
+    @GetMapping("/lock/acquire")
+    public boolean acquireLock(@RequestParam String nodeId) {
+        if (!network.isOnline()) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "Node is dead");
+        }
+        return lockService.tryAcquire(nodeId);
+    }
+
+    @GetMapping("/lock/release")
+    public void releaseLock(@RequestParam String nodeId) {
+        lockService.release(nodeId);
+    }
+
+    @PostMapping("/lomet/sync")
+    public void syncLomet(@RequestBody List<DependencyEdge> edges, @RequestHeader("X-Logical-Time") long time) {
+        clock.update(time);
+        lomet.syncEdges(edges);
+    }
+
     @PostMapping("/leave")
     public void leave() {
         if (!network.isOnline()) {
@@ -110,19 +130,6 @@ public class NodeController {
         topology.removeNeighbor(id);
     }
 
-    @PostMapping("/lomet/update")
-    public void updateLomet(@RequestBody List<DependencyEdge> edges,
-            @RequestParam String senderId,
-            @RequestHeader("X-Logical-Time") long remoteTime) {
-        if (!network.isOnline()) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "Node is dead");
-        }
-
-        clock.update(remoteTime);
-        lomet.addEdges(senderId, edges, remoteTime);
-    }
-
     @PostMapping("/setDelay")
     public void setDelay(@RequestParam int value) {
         if (!network.isOnline()) {
@@ -147,10 +154,6 @@ public class NodeController {
 
     @DeleteMapping("/kill")
     public void kill() {
-        if (!network.isOnline()) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "Node is dead");
-        }
         network.setOnline(false);
         clock.log("Instant end(kill command)");
     }

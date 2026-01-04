@@ -1,6 +1,7 @@
 package dsva.service;
 
 import dsva.model.DependencyEdge;
+import dsva.model.NodeInfo;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import java.util.*;
@@ -10,61 +11,74 @@ public class LometService {
     @Autowired
     private LogicalClockService clock;
 
+    @Autowired
+    private TopologyService topology;
+
+    @Autowired
+    private NetworkService network;
+
     private final Map<String, DependencyEdge> globalWFG = Collections.synchronizedMap(new HashMap<>());
 
-    private final Map<String, Long> lastNodeUpdateClock = Collections.synchronizedMap(new HashMap<>());
+    public void executeInCS(Runnable action) {
+        int attempts = 0;
+        boolean success = false;
 
-    private String getEdgeKey(String from, String to) {
-        return from + "->" + to;
-    }
-
-    public void addWaitEdge(String fromId, String toId) {
-        long currentTime = clock.tick();
-        DependencyEdge newEdge = new DependencyEdge(fromId, toId, currentTime);
-        globalWFG.put(getEdgeKey(fromId, toId), newEdge);
-        clock.log("Wait edge added: " + fromId + " -> " + toId);
-        checkDeadlock();
-    }
-
-    public void removeWaitEdge(String fromId, String toId) {
-        if (globalWFG.remove(getEdgeKey(fromId, toId)) != null) {
-            clock.log("Wait edge removed: " + fromId + " -> " + toId);
+        while (attempts < 4 && !success) {
+            String leaderId = topology.getLeaderId();
+            if (topology.isLeader()) {
+                clock.log("[CS] I am the Leader. Executing.");
+                action.run();
+                broadcastWFG();
+                success = true;
+            } else {
+                boolean granted = network.requestLockFromLeader(leaderId);
+                if (granted) {
+                    action.run();
+                    broadcastWFG();
+                    network.releaseLockOnLeader(leaderId);
+                    success = true;
+                } else {
+                    attempts++;
+                    clock.log("Leader " + leaderId + " denied or dead. Retry " + attempts);
+                    try { Thread.sleep(500); } catch (InterruptedException e) {}
+                }
+            }
         }
     }
 
-    public void removeNodeCompletely(String nodeId) {
-        synchronized (globalWFG) {
-            globalWFG.entrySet().removeIf(entry ->
-                    entry.getValue().getFromId().equals(nodeId) ||
-                            entry.getValue().getToId().equals(nodeId)
-            );
+    public void addWaitEdge(String from, String to) {
+        String key = from + "->" + to;
+        globalWFG.put(key, new DependencyEdge(from, to, clock.tick()));
+    }
+
+    public void removeWaitEdge(String from, String to) {
+        globalWFG.remove(from + "->" + to);
+    }
+
+    public void broadcastWFG() {
+        List<DependencyEdge> edges = new ArrayList<>(globalWFG.values());
+        for ( NodeInfo n : topology.getNeighbors()) {
+            network.sendPost(n.getBaseUrl() + "/api/lomet/sync", edges);
         }
-        clock.log("Lomet graph cleaned for node: " + nodeId);
     }
 
-    public void removeAllWaitEdgesFrom(String fromId) {
-        globalWFG.entrySet().removeIf(entry -> entry.getValue().getFromId().equals(fromId));
-        clock.log("Deleted all edges from node: " + fromId);
-    }
-
-    public void addEdges(String senderId, List<DependencyEdge> incomingEdges, long remoteClock) {
+    public void syncEdges(List<DependencyEdge> incoming) {
         synchronized (globalWFG) {
-            lastNodeUpdateClock.put(senderId, remoteClock);
-
-            globalWFG.entrySet().removeIf(entry ->
-                    entry.getValue().getFromId().equals(senderId) &&
-                            incomingEdges.stream().noneMatch(e -> e.getToId().equals(entry.getValue().getToId()))
-            );
-
-            for (DependencyEdge incoming : incomingEdges) {
-                String key = getEdgeKey(incoming.getFromId(), incoming.getToId());
+            for (DependencyEdge e : incoming) {
+                String key = e.getFromId() + "->" + e.getToId();
                 DependencyEdge existing = globalWFG.get(key);
-                if (existing == null || incoming.getLogicalTime() > existing.getLogicalTime()) {
-                    globalWFG.put(key, incoming);
+                if (existing == null || e.getLogicalTime() > existing.getLogicalTime()) {
+                    globalWFG.put(key, e);
                 }
             }
         }
         checkDeadlock();
+    }
+
+
+    public void removeAllWaitEdgesFrom(String fromId) {
+        globalWFG.entrySet().removeIf(entry -> entry.getValue().getFromId().equals(fromId));
+        clock.log("Deleted all edges from node: " + fromId);
     }
 
     public void checkDeadlock() {

@@ -5,10 +5,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Random;
+import java.util.*;
 
 @Service
 public class TopologyService {
@@ -57,5 +54,24 @@ public class TopologyService {
     public NodeInfo getRandomNeighbor() {
         if (neighbors.isEmpty()) return null;
         return neighbors.get(new Random().nextInt(neighbors.size()));
+    }
+
+    public int getMyPort() {
+        return port;
+    }
+
+    public String getLeaderId() {
+        List<NodeInfo> allNodes = new ArrayList<>(neighbors);
+        allNodes.add(new NodeInfo(host, port));
+
+        String leader = allNodes.stream()
+                .min( Comparator.comparingInt(NodeInfo::getPort))
+                .map(NodeInfo::getId)
+                .orElse(getMyId());
+        return leader;
+    }
+
+    public boolean isLeader() {
+        return getMyId().equals(getLeaderId());
     }
 }

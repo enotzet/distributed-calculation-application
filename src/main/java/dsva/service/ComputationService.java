@@ -22,8 +22,9 @@ public class ComputationService {
     public void initiateWork(int amount) {
         this.localWorkLoad = amount;
         this.isActive = true;
-        lomet.removeAllWaitEdgesFrom(topology.getMyId());
-        broadcastWFG();
+        lomet.executeInCS(() -> {
+            lomet.removeAllWaitEdgesFrom(topology.getMyId());
+        });
         logger.log("Calculation started. Local load: " + amount);
     }
 
@@ -40,7 +41,6 @@ public class ComputationService {
                 logger.log("Work ended. Node is IDLE.");
             }
         } else if (!isActive && !topology.getNeighbors().isEmpty()) {
-            // Žádáme o práci jen pokud už nečekáme (isWaiting)
             if (!isWaiting() && random.nextInt(100) < 10) {
                 requestWorkFromNeighbor(topology.getRandomNeighbor().getId());
             }
@@ -54,38 +54,42 @@ public class ComputationService {
             NodeInfo recipient = topology.getRandomNeighbor();
             if (recipient != null) {
                 logger.log("giving " + part + " parts of work to node " + recipient.getId());
-                network.sendPost(recipient.getBaseUrl() + "/api/work/receive",
+                network.sendPost(recipient.getBaseUrl() + "/api/work/receiveMessage",
                         new WorkUnit("task-" + System.currentTimeMillis(), part, topology.getMyId()));
             }
         }
     }
 
     public void requestWorkFromNeighbor(String targetId) {
-        NodeInfo target = topology.getNeighborById( targetId );
+        NodeInfo target = topology.getNeighborById(targetId);
+        if (target == null) {
+            logger.log("Error: Neighbor " + targetId + " is not in my topology!");
+            return;
+        }
 
-        if ( target != null ) {
-            logger.log( "Asking for work from SPECIFIC node: " + target.getId() );
-            lomet.addWaitEdge( topology.getMyId(), target.getId() );
-            broadcastWFG();
-            network.sendPost( target.getBaseUrl() + "/api/work/request-grant", topology.getMyId() );
-        }
-        else {
-            logger.log( "Error: Neighbor " + targetId + " not found!" );
-        }
+        logger.log("Attempting to request work from " + targetId + ". Entering CS...");
+
+        lomet.executeInCS(() -> {
+            lomet.addWaitEdge(topology.getMyId(), targetId);
+            logger.log("WFG Updated in CS: " + topology.getMyId() + " -> " + targetId);
+        });
+
+        network.sendPost(target.getBaseUrl() + "/api/work/request-grant", topology.getMyId());
     }
 
     public void receiveWork(WorkUnit unit) {
         this.localWorkLoad += unit.getLoad();
         this.isActive = true;
-        lomet.removeWaitEdge(topology.getMyId(), unit.getSenderId());
-        broadcastWFG();
-        logger.log("Received work (" + unit.getLoad() + ") from " + unit.getSenderId());
+        lomet.executeInCS(() -> {
+            lomet.removeWaitEdge(topology.getMyId(), unit.getSenderId());
+        });
+        logger.log("Work received. Status: ACTIVE.");
     }
 
-    private void broadcastWFG() {
-        List<DependencyEdge> myEdges = lomet.getGlobalWFG();
+    public void broadcastWFG() {
+        List<DependencyEdge> edges = lomet.getGlobalWFG();
         for (NodeInfo n : topology.getNeighbors()) {
-            network.sendPost(n.getBaseUrl() + "/api/lomet/update?senderId=" + topology.getMyId(), myEdges);
+            network.sendPost(n.getBaseUrl() + "/api/lomet/sync", edges);
         }
     }
 
@@ -94,8 +98,14 @@ public class ComputationService {
                 .anyMatch(edge -> edge.getFromId().equals(topology.getMyId()));
     }
 
-    public void setActive( boolean active ) {
-        isActive = active;
+    public void setActive() {
+        isActive = true;
+        logger.log("Node is now ACTIVE");
+    }
+
+    public void setPassive() {
+        this.isActive = false;
+        logger.log("Node is now PASSIVE (Idle)");
     }
 
     public boolean isActive() { return isActive; }

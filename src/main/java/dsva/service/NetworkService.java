@@ -16,9 +16,6 @@ public class NetworkService {
     private LogicalClockService clock;
 
     @Autowired
-    private LometService lometService;
-
-    @Autowired
     private TopologyService topologyService;
 
     @Setter
@@ -28,25 +25,35 @@ public class NetworkService {
 
     public void sendPost(String url, Object body) {
         if (!online) return;
-        long timeToSend = clock.tick();
-
+        long time = clock.tick();
         new Thread(() -> {
             try {
                 Thread.sleep(delay);
-                HttpHeaders headers = new HttpHeaders();
-                headers.set("X-Logical-Time", String.valueOf(timeToSend));
-                HttpEntity<Object> entity = new HttpEntity<>(body, headers);
-                rest.postForEntity(url, entity, String.class);
+                if (!online) return; // Проверка после сна
+                HttpHeaders h = new HttpHeaders();
+                h.set("X-Logical-Time", String.valueOf(time));
+                rest.postForEntity(url, new HttpEntity<>(body, h), String.class);
             } catch (Exception e) {
-                clock.log("Failed to send message to " + url + ". Reason: " + e.getMessage());
-
+                clock.log("Comm failure with " + url + ". Removing neighbor.");
                 String neighborId = url.replace("http://", "").split("/api")[0];
-
-                topologyService.removeNeighbor(neighborId);
-
-                lometService.getGlobalWFG().removeIf(edge -> edge.getToId().equals(neighborId));
-                lometService.removeAllWaitEdgesFrom(neighborId);
-            }
+                topologyService.removeNeighbor(neighborId);            }
         }).start();
+    }
+
+    public boolean requestLockFromLeader(String leaderId) {
+        try {
+            String url = "http://" + leaderId + "/api/lock/acquire?nodeId=" + clock.getPort();
+            return Boolean.TRUE.equals(rest.getForObject(url, Boolean.class));
+        } catch (Exception e) {
+            clock.log("Leader " + leaderId + " is not responding. Removing him.");
+            topologyService.removeNeighbor(leaderId);
+            return false;
+        }
+    }
+
+    public void releaseLockOnLeader(String leaderId) {
+        try {
+            rest.getForObject("http://" + leaderId + "/api/lock/release?nodeId=" + clock.getPort(), String.class);
+        } catch (Exception e) { }
     }
 }

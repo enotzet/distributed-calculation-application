@@ -1,5 +1,6 @@
 package dsva.service;
 
+import lombok.Getter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import java.io.FileWriter;
@@ -12,6 +13,7 @@ public class LogicalClockService {
     private final AtomicLong clock = new AtomicLong(0);
 
     @Value("${server.port}")
+    @Getter
     private int port;
 
     public long tick() {

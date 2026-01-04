@@ -34,8 +34,18 @@ public class ComputationController {
     }
 
     @PostMapping("/setActive")
-    public void setActive(@RequestParam boolean active) {
-        computeService.setActive(active);
+    public void setActive() {
+        computeService.setActive();
+    }
+
+    @PostMapping("/setPassive")
+    public void setPassive() {
+        computeService.setPassive();
+    }
+
+    @PostMapping("/request")
+    public void requestResource(@RequestBody String targetId) {
+        computeService.requestWorkFromNeighbor(targetId);
     }
 
     @PostMapping("/receiveMessage")
