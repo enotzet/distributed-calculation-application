@@ -4,7 +4,6 @@ import dsva.model.DependencyEdge;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import java.util.*;
-import java.util.stream.Collectors;
 
 @Service
 public class LometService {
@@ -33,6 +32,16 @@ public class LometService {
         }
     }
 
+    public void removeNodeCompletely(String nodeId) {
+        synchronized (globalWFG) {
+            globalWFG.entrySet().removeIf(entry ->
+                    entry.getValue().getFromId().equals(nodeId) ||
+                            entry.getValue().getToId().equals(nodeId)
+            );
+        }
+        clock.log("Lomet graph cleaned for node: " + nodeId);
+    }
+
     public void removeAllWaitEdgesFrom(String fromId) {
         globalWFG.entrySet().removeIf(entry -> entry.getValue().getFromId().equals(fromId));
         clock.log("Deleted all edges from node: " + fromId);
@@ -42,12 +51,9 @@ public class LometService {
         synchronized (globalWFG) {
             lastNodeUpdateClock.put(senderId, remoteClock);
 
-            if (incomingEdges.isEmpty()) {
-                clock.log("Node " + senderId + " is no longer waiting for anyone. Updating global WFG.");
-            }
-
             globalWFG.entrySet().removeIf(entry ->
-                    entry.getValue().getFromId().equals(senderId) && incomingEdges.stream().noneMatch(e -> e.getToId().equals(entry.getValue().getToId()))
+                    entry.getValue().getFromId().equals(senderId) &&
+                            incomingEdges.stream().noneMatch(e -> e.getToId().equals(entry.getValue().getToId()))
             );
 
             for (DependencyEdge incoming : incomingEdges) {
@@ -69,30 +75,46 @@ public class LometService {
             }
         }
 
+        Set<String> visited = new HashSet<>();
         for (String node : adj.keySet()) {
-            if (hasCycle(node, adj, new HashSet<>(), new LinkedHashSet<>())) {
-                clock.log("!!! DEADLOCK DETECTED !!! Nodes in cycle: " + node);
-                return;
+            if (!visited.contains(node)) {
+                LinkedHashSet<String> stack = new LinkedHashSet<>();
+                List<String> cycle = findCycle(node, adj, visited, stack);
+                if (cycle != null) {
+                    clock.log("!!! DEADLOCK DETECTED !!! Cycle: " + String.join(" -> ", cycle) + " -> " + cycle.get(0));
+                    return;
+                }
             }
         }
     }
 
-    private boolean hasCycle(String curr, Map<String, List<String>> adj, Set<String> visited, Set<String> stack) {
-        if (stack.contains(curr)) return true;
-        if (visited.contains(curr)) return false;
+    private List<String> findCycle(String curr, Map<String, List<String>> adj, Set<String> visited, LinkedHashSet<String> stack) {
+        if (stack.contains(curr)) {
+            List<String> fullStack = new ArrayList<>(stack);
+            int cycleStartIndex = fullStack.indexOf(curr);
+            return new ArrayList<>(fullStack.subList(cycleStartIndex, fullStack.size()));
+        }
+
+        if (visited.contains(curr)) return null;
+
         visited.add(curr);
         stack.add(curr);
+
         List<String> neighbors = adj.get(curr);
         if (neighbors != null) {
             for (String neighbor : neighbors) {
-                if (hasCycle(neighbor, adj, visited, stack)) return true;
+                List<String> cycle = findCycle(neighbor, adj, visited, stack);
+                if (cycle != null) return cycle;
             }
         }
+
         stack.remove(curr);
-        return false;
+        return null;
     }
 
     public List<DependencyEdge> getGlobalWFG() {
-        return new ArrayList<>(globalWFG.values());
+        synchronized (globalWFG) {
+            return new ArrayList<>(globalWFG.values());
+        }
     }
 }

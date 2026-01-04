@@ -22,6 +22,10 @@ public class NodeController {
 
     @PostMapping("/join")
     public String join(@RequestBody NodeInfo bootstrapNode) {
+        if (!network.isOnline()) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "Node is dead");
+        }
         topology.addNeighbor(bootstrapNode);
         clock.tick();
 
@@ -45,8 +49,17 @@ public class NodeController {
         }
     }
 
+    @PostMapping("/lomet/startDetection")
+    public void startDetection() {
+        lomet.checkDeadlock();
+    }
+
     @PostMapping("/register")
     public List<NodeInfo> register(@RequestBody NodeInfo newNode, @RequestHeader("X-Logical-Time") long time) {
+        if (!network.isOnline()) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "Node is dead");
+        }
         clock.update(time);
 
         if (!topology.getNeighbors().contains(newNode)) {
@@ -62,6 +75,11 @@ public class NodeController {
     // Odhlášení ze systému (Graceful Leave)
     @PostMapping("/leave")
     public void leave() {
+        if (!network.isOnline()) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "Node is dead");
+        }
+
         clock.log("Disconnecting from system");
         String myId = topology.getMyId();
         for (NodeInfo n : topology.getNeighbors()) {
@@ -72,12 +90,22 @@ public class NodeController {
 
     @PostMapping("/register-proxy")
     public void registerProxy(@RequestBody NodeInfo newNode, @RequestHeader("X-Logical-Time") long time) {
+        if (!network.isOnline()) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "Node is dead");
+        }
+
         clock.update(time);
         topology.addNeighbor(newNode);
     }
 
     @PostMapping("/unregister/{id}")
     public void unregister(@PathVariable String id, @RequestHeader("X-Logical-Time") long remoteTime) {
+        if (!network.isOnline()) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "Node is dead");
+        }
+
         clock.update(remoteTime);
         topology.removeNeighbor(id);
     }
@@ -86,14 +114,45 @@ public class NodeController {
     public void updateLomet(@RequestBody List<DependencyEdge> edges,
             @RequestParam String senderId,
             @RequestHeader("X-Logical-Time") long remoteTime) {
+        if (!network.isOnline()) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "Node is dead");
+        }
+
         clock.update(remoteTime);
         lomet.addEdges(senderId, edges, remoteTime);
     }
 
+    @PostMapping("/setDelay")
+    public void setDelay(@RequestParam int value) {
+        if (!network.isOnline()) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "Node is dead");
+        }
+
+        network.setDelay(value);
+    }
+
+    @PostMapping("/revive")
+    public void revive() {
+        network.setOnline(true);
+        clock.log("Node revived");
+        List<NodeInfo> oldNeighbors = topology.getNeighbors();
+        NodeInfo me = new NodeInfo("localhost", getMyPort());
+
+        for (NodeInfo neighbor : oldNeighbors) {
+            network.sendPost(neighbor.getBaseUrl() + "/api/register-proxy", me);
+        }
+    }
+
     @DeleteMapping("/kill")
     public void kill() {
+        if (!network.isOnline()) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "Node is dead");
+        }
+        network.setOnline(false);
         clock.log("Instant end(kill command)");
-        System.exit(0);
     }
 
     private int getMyPort() {

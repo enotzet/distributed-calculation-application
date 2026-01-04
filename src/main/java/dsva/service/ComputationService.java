@@ -29,6 +29,7 @@ public class ComputationService {
 
     @Scheduled(fixedDelay = 2000)
     public void doWork() {
+        if (!network.isOnline()) return;
         if (isActive && localWorkLoad > 0) {
             localWorkLoad--;
             logger.log("Working... lasts: " + localWorkLoad);
@@ -40,8 +41,8 @@ public class ComputationService {
             }
         } else if (!isActive && !topology.getNeighbors().isEmpty()) {
             // Žádáme o práci jen pokud už nečekáme (isWaiting)
-            if (!isWaiting()) {
-                requestWorkFromNeighbor();
+            if (!isWaiting() && random.nextInt(100) < 10) {
+                requestWorkFromNeighbor(topology.getRandomNeighbor().getId());
             }
         }
     }
@@ -59,13 +60,17 @@ public class ComputationService {
         }
     }
 
-    public void requestWorkFromNeighbor() {
-        NodeInfo target = topology.getRandomNeighbor();
-        if (target != null) {
-            logger.log("Asking for work " + target.getId());
-            lomet.addWaitEdge(topology.getMyId(), target.getId());
+    public void requestWorkFromNeighbor(String targetId) {
+        NodeInfo target = topology.getNeighborById( targetId );
+
+        if ( target != null ) {
+            logger.log( "Asking for work from SPECIFIC node: " + target.getId() );
+            lomet.addWaitEdge( topology.getMyId(), target.getId() );
             broadcastWFG();
-            network.sendPost(target.getBaseUrl() + "/api/work/request-grant", topology.getMyId());
+            network.sendPost( target.getBaseUrl() + "/api/work/request-grant", topology.getMyId() );
+        }
+        else {
+            logger.log( "Error: Neighbor " + targetId + " not found!" );
         }
     }
 
@@ -87,6 +92,10 @@ public class ComputationService {
     private boolean isWaiting() {
         return lomet.getGlobalWFG().stream()
                 .anyMatch(edge -> edge.getFromId().equals(topology.getMyId()));
+    }
+
+    public void setActive( boolean active ) {
+        isActive = active;
     }
 
     public boolean isActive() { return isActive; }

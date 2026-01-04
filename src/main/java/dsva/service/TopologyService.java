@@ -38,6 +38,13 @@ public class TopologyService {
         }
     }
 
+    public NodeInfo getNeighborById(String nodeId) {
+        return neighbors.stream()
+                .filter(n -> n.getId().equals(nodeId))
+                .findFirst()
+                .orElse(null);
+    }
+
     public void removeNeighbor(String nodeId) {
         neighbors.removeIf(n -> n.getId().equals(nodeId));
         logger.log("Neighbour is removed: " + nodeId);

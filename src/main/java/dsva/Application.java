@@ -33,6 +33,8 @@ public class Application {
 							nodeController.leave();
 						} else if (cmd.equals("kill")) {
 							nodeController.kill();
+						}  else if (cmd.equals("revive")) {
+							nodeController.revive();
 						}
 					} catch (Exception e) {
 						System.out.println("Error in CLI: " + e.getMessage());
