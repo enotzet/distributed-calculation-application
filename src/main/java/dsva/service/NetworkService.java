@@ -1,5 +1,6 @@
 package dsva.service;
 
+import dsva.model.NodeInfo;
 import lombok.Data;
 import lombok.Getter;
 import lombok.Setter;
@@ -29,14 +30,16 @@ public class NetworkService {
         new Thread(() -> {
             try {
                 Thread.sleep(delay);
-                if (!online) return; // Проверка после сна
+                if (!online) return;
                 HttpHeaders h = new HttpHeaders();
                 h.set("X-Logical-Time", String.valueOf(time));
                 rest.postForEntity(url, new HttpEntity<>(body, h), String.class);
             } catch (Exception e) {
                 clock.log("Comm failure with " + url + ". Removing neighbor.");
                 String neighborId = url.replace("http://", "").split("/api")[0];
-                topologyService.removeNeighbor(neighborId);            }
+                topologyService.removeNeighbor(neighborId);
+                broadcastDeath(neighborId);
+            }
         }).start();
     }
 
@@ -55,5 +58,11 @@ public class NetworkService {
         try {
             rest.getForObject("http://" + leaderId + "/api/lock/release?nodeId=" + clock.getPort(), String.class);
         } catch (Exception e) { }
+    }
+
+    private void broadcastDeath(String deadNodeId) {
+        for ( NodeInfo n : topologyService.getNeighbors()) {
+            sendPost(n.getBaseUrl() + "/api/unregister/" + deadNodeId, null);
+        }
     }
 }

@@ -13,7 +13,8 @@ public class TopologyService {
     @Value("${server.port}")
     private int port;
 
-    private final String host = "localhost";
+    @Value("${node.ip:localhost}")
+    private String host;
 
     private final List<NodeInfo> neighbors = Collections.synchronizedList(new ArrayList<>());
 
@@ -64,11 +65,11 @@ public class TopologyService {
         List<NodeInfo> allNodes = new ArrayList<>(neighbors);
         allNodes.add(new NodeInfo(host, port));
 
-        String leader = allNodes.stream()
-                .min( Comparator.comparingInt(NodeInfo::getPort))
+        return allNodes.stream()
+                .min(Comparator.comparing(NodeInfo::getHost)
+                        .thenComparingInt(NodeInfo::getPort))
                 .map(NodeInfo::getId)
                 .orElse(getMyId());
-        return leader;
     }
 
     public boolean isLeader() {

@@ -16,6 +16,9 @@ public class LogicalClockService {
     @Getter
     private int port;
 
+    @Value("${node.ip:localhost}")
+    private String nodeIp;
+
     public long tick() {
         return clock.incrementAndGet();
     }
@@ -30,8 +33,9 @@ public class LogicalClockService {
 
     public synchronized void log(String message) {
         String logEntry = String.format("[%d] [Node:%d] %s", clock.get(), port, message);
+        String fileName = "node_" + nodeIp.replace(".", "_") + "_" + port + ".log";
         System.out.println(logEntry);
-        try (PrintWriter out = new PrintWriter(new FileWriter("node_" + port + ".log", true))) {
+        try (PrintWriter out = new PrintWriter(new FileWriter(fileName, true))) {
             out.println(LocalDateTime.now() + " " + logEntry);
         } catch (Exception e) {
             e.printStackTrace();

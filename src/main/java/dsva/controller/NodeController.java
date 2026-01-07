@@ -34,7 +34,7 @@ public class NodeController {
             RestTemplate restTemplate = new RestTemplate();
             HttpHeaders headers = new HttpHeaders();
             headers.set("X-Logical-Time", String.valueOf(clock.getTime()));
-            HttpEntity<NodeInfo> entity = new HttpEntity<>(new NodeInfo("localhost", getMyPort()), headers);
+            HttpEntity<NodeInfo> entity = new HttpEntity<>(new NodeInfo(topology.getMyId().split(":")[0], getMyPort()), headers);
 
             ResponseEntity<NodeInfo[]> response = restTemplate.postForEntity(
                     bootstrapNode.getBaseUrl() + "/api/register", entity, NodeInfo[].class);
@@ -145,7 +145,7 @@ public class NodeController {
         network.setOnline(true);
         clock.log("Node revived");
         List<NodeInfo> oldNeighbors = topology.getNeighbors();
-        NodeInfo me = new NodeInfo("localhost", getMyPort());
+        NodeInfo me = new NodeInfo( topology.getMyId().split(":")[0], getMyPort() );
 
         for (NodeInfo neighbor : oldNeighbors) {
             network.sendPost(neighbor.getBaseUrl() + "/api/register-proxy", me);

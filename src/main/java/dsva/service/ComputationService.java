@@ -42,7 +42,7 @@ public class ComputationService {
             }
         } else if (!isActive && !topology.getNeighbors().isEmpty()) {
             if (!isWaiting() && random.nextInt(100) < 10) {
-                requestWorkFromNeighbor(topology.getRandomNeighbor().getId());
+                // requestWorkFromNeighbor(topology.getRandomNeighbor().getId());
             }
         }
     }

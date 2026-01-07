@@ -64,15 +64,15 @@ public class LometService {
 
     public void syncEdges(List<DependencyEdge> incoming) {
         synchronized (globalWFG) {
+            globalWFG.clear();
             for (DependencyEdge e : incoming) {
                 String key = e.getFromId() + "->" + e.getToId();
-                DependencyEdge existing = globalWFG.get(key);
-                if (existing == null || e.getLogicalTime() > existing.getLogicalTime()) {
-                    globalWFG.put(key, e);
-                }
+                globalWFG.put(key, e);
             }
         }
-        checkDeadlock();
+        if (!incoming.isEmpty()) {
+            checkDeadlock();
+        }
     }
 
 
@@ -96,9 +96,26 @@ public class LometService {
                 List<String> cycle = findCycle(node, adj, visited, stack);
                 if (cycle != null) {
                     clock.log("!!! DEADLOCK DETECTED !!! Cycle: " + String.join(" -> ", cycle) + " -> " + cycle.get(0));
+                    resolveDeadlock(cycle);
                     return;
                 }
             }
+        }
+    }
+
+    private void resolveDeadlock(List<String> cycle) {
+        String myId = topology.getMyId();
+        if (cycle.contains(myId)) {
+            clock.log("[RESOLUTION] I am part of the deadlock. Aborting my request to break the cycle.");
+
+            int myIndex = cycle.indexOf(myId);
+            int nextIndex = (myIndex + 1) % cycle.size();
+            String waitingFor = cycle.get(nextIndex);
+
+            globalWFG.remove(myId + "->" + waitingFor);
+            broadcastWFG();
+
+            clock.log("[RESOLUTION] Edge " + myId + " -> " + waitingFor + " removed. Deadlock broken.");
         }
     }
 
