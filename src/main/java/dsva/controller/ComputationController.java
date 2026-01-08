@@ -60,12 +60,15 @@ public class ComputationController {
     public void grantWork(@RequestBody String requesterId, @RequestHeader("X-Logical-Time") long time) {
         if ( !networkService.isOnline() )
             throw new ResponseStatusException( HttpStatus.SERVICE_UNAVAILABLE );        logger.update(time);
-        logger.log("Node " + requesterId + " asking me for job");
-        computeService.passWork();
+        String cleanId = requesterId.trim().replace("\"", "");
+        logger.log("Node " + cleanId + " asking me for job. Granting...");
+
+        // Передаем работу именно тому, кто попросил
+        computeService.passWork(cleanId);
     }
 
     @PostMapping("/pass")
     public void pass() {
-        computeService.passWork();
+        computeService.passWork(null);
     }
 }

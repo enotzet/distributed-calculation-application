@@ -23,12 +23,13 @@ public class LometService {
         int attempts = 0;
         boolean success = false;
 
-        while (attempts < 4 && !success) {
+        while (attempts < 10 && !success) {
             String leaderId = topology.getLeaderId();
             if (topology.isLeader()) {
                 clock.log("[CS] I am the Leader. Executing.");
                 action.run();
                 broadcastWFG();
+                checkDeadlock();
                 success = true;
             } else {
                 boolean granted = network.requestLockFromLeader(leaderId);
@@ -36,6 +37,9 @@ public class LometService {
                     action.run();
                     broadcastWFG();
                     network.releaseLockOnLeader(leaderId);
+
+                    checkDeadlock();
+
                     success = true;
                 } else {
                     attempts++;
@@ -62,12 +66,22 @@ public class LometService {
         }
     }
 
+    public void removeEdgesInvolving(String nodeId) {
+        synchronized (globalWFG) {
+            globalWFG.entrySet().removeIf(entry ->
+                    entry.getValue().getFromId().equals(nodeId) ||
+                            entry.getValue().getToId().equals(nodeId)
+            );
+        }
+        clock.log("Cleaned up WFG edges involving: " + nodeId);
+        broadcastWFG();
+    }
+
     public void syncEdges(List<DependencyEdge> incoming) {
         synchronized (globalWFG) {
             globalWFG.clear();
             for (DependencyEdge e : incoming) {
-                String key = e.getFromId() + "->" + e.getToId();
-                globalWFG.put(key, e);
+                globalWFG.put(e.getFromId() + "->" + e.getToId(), e);
             }
         }
         if (!incoming.isEmpty()) {
@@ -82,6 +96,7 @@ public class LometService {
     }
 
     public void checkDeadlock() {
+        if ( !network.isOnline() ) return;
         Map<String, List<String>> adj = new HashMap<>();
         synchronized (globalWFG) {
             for (DependencyEdge edge : globalWFG.values()) {
@@ -105,17 +120,36 @@ public class LometService {
 
     private void resolveDeadlock(List<String> cycle) {
         String myId = topology.getMyId();
-        if (cycle.contains(myId)) {
-            clock.log("[RESOLUTION] I am part of the deadlock. Aborting my request to break the cycle.");
+        DependencyEdge latestEdge = null;
 
-            int myIndex = cycle.indexOf(myId);
-            int nextIndex = (myIndex + 1) % cycle.size();
-            String waitingFor = cycle.get(nextIndex);
+        synchronized (globalWFG) {
+            for (int i = 0; i < cycle.size(); i++) {
+                String from = cycle.get(i);
+                String to = cycle.get((i + 1) % cycle.size());
+                String key = from + "->" + to;
 
-            globalWFG.remove(myId + "->" + waitingFor);
-            broadcastWFG();
+                DependencyEdge edge = globalWFG.get(key);
+                if (edge != null) {
+                    if (latestEdge == null || edge.getLogicalTime() > latestEdge.getLogicalTime()) {
+                        latestEdge = edge;
+                    }
+                }
+            }
+        }
 
-            clock.log("[RESOLUTION] Edge " + myId + " -> " + waitingFor + " removed. Deadlock broken.");
+        if (latestEdge == null) return;
+
+        if (latestEdge.getFromId().equals(myId)) {
+            clock.log("[RESOLUTION] I own the latest edge in the cycle (" + latestEdge.getLogicalTime() +
+                    "). Breaking the deadlock.");
+
+            String finalTo = latestEdge.getToId();
+            executeInCS(() -> {
+                removeWaitEdge(myId, finalTo);
+                clock.log("[RESOLUTION] Deadlock resolved by removing latest edge: " + myId + " -> " + finalTo);
+            });
+        } else {
+            clock.log("[RESOLUTION] Deadlock detected, but it's not my turn to resolve. Waiting for " + latestEdge.getFromId());
         }
     }
 

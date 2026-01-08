@@ -22,10 +22,8 @@ public class ComputationService {
     public void initiateWork(int amount) {
         this.localWorkLoad = amount;
         this.isActive = true;
-        lomet.executeInCS(() -> {
-            lomet.removeAllWaitEdgesFrom(topology.getMyId());
-        });
         logger.log("Calculation started. Local load: " + amount);
+        checkAndGrantPendingRequests();
     }
 
     @Scheduled(fixedDelay = 2000)
@@ -34,8 +32,9 @@ public class ComputationService {
         if (isActive && localWorkLoad > 0) {
             localWorkLoad--;
             logger.log("Working... lasts: " + localWorkLoad);
+            checkAndGrantPendingRequests();
             if (localWorkLoad > 5 && random.nextInt(100) < 20)
-                passWork();
+                //passWork(null);
             if (localWorkLoad == 0) {
                 isActive = false;
                 logger.log("Work ended. Node is IDLE.");
@@ -47,15 +46,26 @@ public class ComputationService {
         }
     }
 
-    public void passWork() {
+    public void passWork(String specificRecipientId) {
         if (localWorkLoad > 1) {
             int part = localWorkLoad / 2;
-            localWorkLoad -= part;
-            NodeInfo recipient = topology.getRandomNeighbor();
+            NodeInfo recipient = null;
+
+            if (specificRecipientId != null && !specificRecipientId.isEmpty()) {
+                recipient = topology.getNeighborById(specificRecipientId);
+            }
+
+            if (recipient == null) {
+                recipient = topology.getRandomNeighbor();
+            }
+
             if (recipient != null) {
-                logger.log("giving " + part + " parts of work to node " + recipient.getId());
+                localWorkLoad -= part;
+                logger.log("Giving " + part + " parts of work to node " + recipient.getId());
                 network.sendPost(recipient.getBaseUrl() + "/api/work/receiveMessage",
                         new WorkUnit("task-" + System.currentTimeMillis(), part, topology.getMyId()));
+            } else {
+                logger.log("No neighbors available to pass work.");
             }
         }
     }
@@ -77,6 +87,25 @@ public class ComputationService {
         network.sendPost(target.getBaseUrl() + "/api/work/request-grant", topology.getMyId());
     }
 
+    private void checkAndGrantPendingRequests() {
+        if (localWorkLoad <= 1) return;
+        List<String> waiters = lomet.getGlobalWFG().stream()
+                .filter(edge -> edge.getToId().equals(topology.getMyId()))
+                .map(DependencyEdge::getFromId)
+                .collect(java.util.stream.Collectors.toList());
+
+        for (String requesterId : waiters) {
+            if (localWorkLoad > 1) {
+                logger.log("Detected that " + requesterId + " is still waiting for me. Granting work now.");
+                passWork(requesterId);
+
+                lomet.executeInCS(() -> {
+                    lomet.removeWaitEdge(requesterId, topology.getMyId());
+                });
+            }
+        }
+    }
+
     public void receiveWork(WorkUnit unit) {
         this.localWorkLoad += unit.getLoad();
         this.isActive = true;
@@ -84,6 +113,7 @@ public class ComputationService {
             lomet.removeWaitEdge(topology.getMyId(), unit.getSenderId());
         });
         logger.log("Work received. Status: ACTIVE.");
+        checkAndGrantPendingRequests();
     }
 
     public void broadcastWFG() {

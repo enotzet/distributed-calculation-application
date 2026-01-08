@@ -32,7 +32,7 @@ public class LogicalClockService {
     }
 
     public synchronized void log(String message) {
-        String logEntry = String.format("[%d] [Node:%d] %s", clock.get(), port, message);
+        String logEntry = String.format("[%d] [%s:%d] %s", clock.get(), nodeIp, port, message);
         String fileName = "node_" + nodeIp.replace(".", "_") + "_" + port + ".log";
         System.out.println(logEntry);
         try (PrintWriter out = new PrintWriter(new FileWriter(fileName, true))) {

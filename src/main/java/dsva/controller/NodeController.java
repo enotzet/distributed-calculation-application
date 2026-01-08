@@ -102,6 +102,11 @@ public class NodeController {
 
         clock.log("Disconnecting from system");
         String myId = topology.getMyId();
+
+        lomet.executeInCS(() -> {
+            lomet.removeEdgesInvolving(myId);
+        });
+
         for (NodeInfo n : topology.getNeighbors()) {
             network.sendPost(n.getBaseUrl() + "/api/unregister/" + myId, null);
         }
@@ -128,6 +133,7 @@ public class NodeController {
 
         clock.update(remoteTime);
         topology.removeNeighbor(id);
+        lomet.removeEdgesInvolving(id);
     }
 
     @PostMapping("/setDelay")
@@ -145,7 +151,8 @@ public class NodeController {
         network.setOnline(true);
         clock.log("Node revived");
         List<NodeInfo> oldNeighbors = topology.getNeighbors();
-        NodeInfo me = new NodeInfo( topology.getMyId().split(":")[0], getMyPort() );
+        String myIp = topology.getMyId().split(":")[0];
+        NodeInfo me = new NodeInfo( myIp, getMyPort() );
 
         for (NodeInfo neighbor : oldNeighbors) {
             network.sendPost(neighbor.getBaseUrl() + "/api/register-proxy", me);

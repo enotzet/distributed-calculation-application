@@ -5,6 +5,7 @@ import lombok.Data;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.http.*;
@@ -18,6 +19,10 @@ public class NetworkService {
 
     @Autowired
     private TopologyService topologyService;
+
+    @Autowired
+    @Lazy
+    private LometService lomet;
 
     @Setter
     private int delay = 1000;
@@ -38,6 +43,7 @@ public class NetworkService {
                 clock.log("Comm failure with " + url + ". Removing neighbor.");
                 String neighborId = url.replace("http://", "").split("/api")[0];
                 topologyService.removeNeighbor(neighborId);
+                lomet.removeEdgesInvolving(neighborId);
                 broadcastDeath(neighborId);
             }
         }).start();
