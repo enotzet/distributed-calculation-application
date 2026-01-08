@@ -29,22 +29,22 @@ sleep 1
 
 echo "Node 4 requests work from Node 3..."
 curl -X POST "http://$NODE4:$PORT/api/work/request" -H "Content-Type: text/plain" -d "$NODE3:$PORT"
+sleep 4
+
+curl -X DELETE "http://$NODE1:$PORT/api/kill"
+
+#curl -X POST "http://$NODE2:$PORT/api/leave"
+
 sleep 1
 
-#curl -X DELETE "http://$NODE2:$PORT/api/kill"
-
-curl -X POST "http://$NODE2:$PORT/api/leave"
-
-sleep 1
-
-curl -X POST "http://$NODE1:$PORT/api/work/request" -H "Content-Type: text/plain" -d "$NODE4:$PORT"
+curl -X POST "http://$NODE2:$PORT/api/work/request" -H "Content-Type: text/plain" -d "$NODE4:$PORT"
 
 sleep 1
 
 #curl -X POST "http://$NODE1:$PORT/api/lomet/startDetection"
 sleep $SLEEP_TIME
 
-curl -X POST "http://$NODE1:$PORT/api/work/start?amount=200"
+curl -X POST "http://$NODE1:$PORT/api/work/start?amount=100"
 
 
 

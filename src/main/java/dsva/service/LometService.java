@@ -95,6 +95,35 @@ public class LometService {
         clock.log("Deleted all edges from node: " + fromId);
     }
 
+    public void handleNodeFailure(String deadNodeId) {
+        synchronized (globalWFG) {
+            List<String> targetsOfDeadNode = globalWFG.values().stream()
+                    .filter(e -> e.getFromId().equals(deadNodeId))
+                    .map(DependencyEdge::getToId)
+                    .collect(java.util.stream.Collectors.toList());
+
+            List<String> waitersOfDeadNode = globalWFG.values().stream()
+                    .filter(e -> e.getToId().equals(deadNodeId))
+                    .map(DependencyEdge::getFromId)
+                    .collect(java.util.stream.Collectors.toList());
+
+            for (String waiter : waitersOfDeadNode) {
+                for (String target : targetsOfDeadNode) {
+                    if (!waiter.equals(target)) { // Избегаем селф-лупов
+                        addWaitEdge(waiter, target);
+                        clock.log("[BYPASS] Node " + waiter + " now waiting for " + target + " (bypassing dead " + deadNodeId + ")");
+                    }
+                }
+            }
+
+            globalWFG.entrySet().removeIf(entry ->
+                    entry.getValue().getFromId().equals(deadNodeId) ||
+                            entry.getValue().getToId().equals(deadNodeId)
+            );
+        }
+        broadcastWFG();
+    }
+
     public void checkDeadlock() {
         if ( !network.isOnline() ) return;
         Map<String, List<String>> adj = new HashMap<>();

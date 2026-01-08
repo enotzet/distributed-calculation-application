@@ -6,6 +6,7 @@ import lombok.Getter;
 import lombok.Setter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.http.*;
@@ -42,9 +43,7 @@ public class NetworkService {
             } catch (Exception e) {
                 clock.log("Comm failure with " + url + ". Removing neighbor.");
                 String neighborId = url.replace("http://", "").split("/api")[0];
-                topologyService.removeNeighbor(neighborId);
-                lomet.removeEdgesInvolving(neighborId);
-                broadcastDeath(neighborId);
+                reportNodeFailure(neighborId);
             }
         }).start();
     }
@@ -57,6 +56,32 @@ public class NetworkService {
             clock.log("Leader " + leaderId + " is not responding. Removing him.");
             topologyService.removeNeighbor(leaderId);
             return false;
+        }
+    }
+
+    public void reportNodeFailure(String nodeId) {
+        if (topologyService.getNeighborById(nodeId) != null) {
+            clock.log("!!! HEALTH CHECK FAILED !!! Node " + nodeId + " is down.");
+            topologyService.removeNeighbor(nodeId);
+
+            lomet.executeInCS(() -> {
+                lomet.handleNodeFailure(nodeId);
+            });
+
+            broadcastDeath(nodeId);
+        }
+    }
+
+    @Scheduled(fixedDelay = 1000)
+    public void checkNeighbors() {
+        if (!online) return;
+
+        for (NodeInfo n : topologyService.getNeighbors()) {
+            try {
+                rest.getForObject(n.getBaseUrl() + "/api/ping", String.class);
+            } catch (Exception e) {
+                reportNodeFailure(n.getId());
+            }
         }
     }
 

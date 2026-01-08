@@ -93,6 +93,15 @@ public class NodeController {
         lomet.syncEdges(edges);
     }
 
+    @GetMapping("/ping")
+    public String ping() {
+        if (!network.isOnline()) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "Node is dead");
+        }
+        return "pong";
+    }
+
     @PostMapping("/leave")
     public void leave() {
         if (!network.isOnline()) {
@@ -104,7 +113,7 @@ public class NodeController {
         String myId = topology.getMyId();
 
         lomet.executeInCS(() -> {
-            lomet.removeEdgesInvolving(myId);
+            lomet.handleNodeFailure(myId);
         });
 
         for (NodeInfo n : topology.getNeighbors()) {
@@ -133,7 +142,9 @@ public class NodeController {
 
         clock.update(remoteTime);
         topology.removeNeighbor(id);
-        lomet.removeEdgesInvolving(id);
+        lomet.executeInCS(() -> {
+            lomet.handleNodeFailure(id);
+        });
     }
 
     @PostMapping("/setDelay")

@@ -96,6 +96,8 @@ public class ComputationService {
 
         for (String requesterId : waiters) {
             if (localWorkLoad > 1) {
+                lomet.removeWaitEdge(requesterId, topology.getMyId());
+
                 logger.log("Detected that " + requesterId + " is still waiting for me. Granting work now.");
                 passWork(requesterId);
 
