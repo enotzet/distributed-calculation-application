@@ -25,9 +25,6 @@ public class TopologyService {
         return host + ":" + port;
     }
 
-    public String getMyUrl() {
-        return "http://" + host + ":" + port;
-    }
 
     public void addNeighbor(NodeInfo node) {
         if (!node.getId().equals(getMyId()) && !neighbors.contains(node)) {
@@ -55,24 +52,5 @@ public class TopologyService {
     public NodeInfo getRandomNeighbor() {
         if (neighbors.isEmpty()) return null;
         return neighbors.get(new Random().nextInt(neighbors.size()));
-    }
-
-    public int getMyPort() {
-        return port;
-    }
-
-    public String getLeaderId() {
-        List<NodeInfo> allNodes = new ArrayList<>(neighbors);
-        allNodes.add(new NodeInfo(host, port));
-
-        return allNodes.stream()
-                .min(Comparator.comparing(NodeInfo::getHost)
-                        .thenComparingInt(NodeInfo::getPort))
-                .map(NodeInfo::getId)
-                .orElse(getMyId());
-    }
-
-    public boolean isLeader() {
-        return getMyId().equals(getLeaderId());
     }
 }

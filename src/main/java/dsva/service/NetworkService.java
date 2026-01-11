@@ -1,99 +1,43 @@
 package dsva.service;
 
 import dsva.model.NodeInfo;
-import lombok.Data;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Lazy;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
-import org.springframework.http.*;
 
 @Service
 public class NetworkService {
     private final RestTemplate rest = new RestTemplate();
+    @Autowired private TopologyService topologyService;
 
-    @Autowired
-    private LogicalClockService clock;
-
-    @Autowired
-    private TopologyService topologyService;
-
-    @Autowired
-    @Lazy
-    private LometService lomet;
-
+    @Getter
     @Setter
-    private int delay = 1000;
-    @Setter @Getter
     private boolean online = true;
 
     public void sendPost(String url, Object body) {
         if (!online) return;
-        long time = clock.tick();
         new Thread(() -> {
-            try {
-                Thread.sleep(delay);
-                if (!online) return;
-                HttpHeaders h = new HttpHeaders();
-                h.set("X-Logical-Time", String.valueOf(time));
-                rest.postForEntity(url, new HttpEntity<>(body, h), String.class);
-            } catch (Exception e) {
-                clock.log("Comm failure with " + url + ". Removing neighbor.");
-                String neighborId = url.replace("http://", "").split("/api")[0];
-                reportNodeFailure(neighborId);
-            }
+            try { rest.postForEntity(url, body, String.class); } catch (Exception e) {}
         }).start();
     }
 
-    public boolean requestLockFromLeader(String leaderId) {
-        try {
-            String url = "http://" + leaderId + "/api/lock/acquire?nodeId=" + clock.getPort();
-            return Boolean.TRUE.equals(rest.getForObject(url, Boolean.class));
-        } catch (Exception e) {
-            clock.log("Leader " + leaderId + " is not responding. Removing him.");
-            topologyService.removeNeighbor(leaderId);
-            return false;
-        }
-    }
-
-    public void reportNodeFailure(String nodeId) {
-        if (topologyService.getNeighborById(nodeId) != null) {
-            clock.log("!!! HEALTH CHECK FAILED !!! Node " + nodeId + " is down.");
-            topologyService.removeNeighbor(nodeId);
-
-            lomet.executeInCS(() -> {
-                lomet.handleNodeFailure(nodeId);
-            });
-
-            broadcastDeath(nodeId);
-        }
-    }
-
-    @Scheduled(fixedDelay = 1000)
-    public void checkNeighbors() {
+    public void sendRaRequest(String baseUrl, long time, String myId) {
         if (!online) return;
-
-        for (NodeInfo n : topologyService.getNeighbors()) {
-            try {
-                rest.getForObject(n.getBaseUrl() + "/api/ping", String.class);
-            } catch (Exception e) {
-                reportNodeFailure(n.getId());
-            }
-        }
+        String url = baseUrl + "/api/ra/request?time=" + time + "&senderId=" + myId;
+        new Thread(() -> {
+            try { rest.postForEntity(url, null, String.class); } catch (Exception e) {}
+        }).start();
     }
 
-    public void releaseLockOnLeader(String leaderId) {
-        try {
-            rest.getForObject("http://" + leaderId + "/api/lock/release?nodeId=" + clock.getPort(), String.class);
-        } catch (Exception e) { }
-    }
-
-    private void broadcastDeath(String deadNodeId) {
-        for ( NodeInfo n : topologyService.getNeighbors()) {
-            sendPost(n.getBaseUrl() + "/api/unregister/" + deadNodeId, null);
+    public void sendRaReply(String senderId) {
+        if (!online) return;
+        NodeInfo n = topologyService.getNeighborById(senderId);
+        if (n != null) {
+            new Thread(() -> {
+                try { rest.postForEntity(n.getBaseUrl() + "/api/ra/reply", null, String.class); } catch (Exception e) {}
+            }).start();
         }
     }
 }

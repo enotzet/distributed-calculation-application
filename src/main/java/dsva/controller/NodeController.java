@@ -1,40 +1,38 @@
-// file: src/main/java/dsva/controller/NodeController.java
 package dsva.controller;
 
 import dsva.model.*;
 import dsva.service.*;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.ResponseEntity;
+import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.server.ResponseStatusException;
 
-import java.util.*;
+import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api")
 public class NodeController {
-    @Autowired private LogicalClockService clock;
-    @Autowired private TopologyService topology;
     @Autowired private LometService lomet;
-    @Autowired private LockService lockService;
+    @Autowired private RicartAgrawalaService raService;
+    @Autowired private TopologyService topology;
+    @Autowired private LogicalClockService clock;
     @Autowired private NetworkService network;
+
 
     @PostMapping("/join")
     public String join(@RequestBody NodeInfo bootstrapNode) {
-        if (!network.isOnline()) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "Node is dead");
-        }
+        checkOnline();
         topology.addNeighbor(bootstrapNode);
-        clock.tick();
 
         try {
             RestTemplate restTemplate = new RestTemplate();
             HttpHeaders headers = new HttpHeaders();
             headers.set("X-Logical-Time", String.valueOf(clock.getTime()));
-            HttpEntity<NodeInfo> entity = new HttpEntity<>(new NodeInfo(topology.getMyId().split(":")[0], getMyPort()), headers);
+
+            NodeInfo me = new NodeInfo(topology.getMyId().split(":")[0], getMyPort());
+            HttpEntity<NodeInfo> entity = new HttpEntity<>(me, headers);
 
             ResponseEntity<NodeInfo[]> response = restTemplate.postForEntity(
                     bootstrapNode.getBaseUrl() + "/api/register", entity, NodeInfo[].class);
@@ -44,139 +42,105 @@ public class NodeController {
                     topology.addNeighbor(n);
                 }
             }
-            return "Join successful. Neighbors count: " + topology.getNeighbors().size();
+            return "Join successful. Neighbors: " + topology.getNeighbors().size();
         } catch (Exception e) {
             return "Join failed: " + e.getMessage();
         }
     }
 
-    @PostMapping("/lomet/startDetection")
-    public void startDetection() {
-        lomet.checkDeadlock();
-    }
-
     @PostMapping("/register")
-    public List<NodeInfo> register(@RequestBody NodeInfo newNode, @RequestHeader("X-Logical-Time") long time) {
-        if (!network.isOnline()) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "Node is dead");
-        }
-        clock.update(time);
-
+    public List<NodeInfo> register(@RequestBody NodeInfo newNode) {
+        checkOnline();
         if (!topology.getNeighbors().contains(newNode)) {
             for (NodeInfo neighbor : topology.getNeighbors()) {
                 network.sendPost(neighbor.getBaseUrl() + "/api/register-proxy", newNode);
             }
             topology.addNeighbor(newNode);
         }
-
         return topology.getNeighbors();
     }
 
-    @GetMapping("/lock/acquire")
-    public boolean acquireLock(@RequestParam String nodeId) {
-        if (!network.isOnline()) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "Node is dead");
-        }
-        return lockService.tryAcquire(nodeId);
-    }
-
-    @GetMapping("/lock/release")
-    public void releaseLock(@RequestParam String nodeId) {
-        lockService.release(nodeId);
-    }
-
-    @PostMapping("/lomet/sync")
-    public void syncLomet(@RequestBody List<DependencyEdge> edges, @RequestHeader("X-Logical-Time") long time) {
-        clock.update(time);
-        lomet.syncEdges(edges);
-    }
-
-    @GetMapping("/ping")
-    public String ping() {
-        if (!network.isOnline()) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "Node is dead");
-        }
-        return "pong";
+    @PostMapping("/register-proxy")
+    public void registerProxy(@RequestBody NodeInfo newNode) {
+        checkOnline();
+        topology.addNeighbor(newNode);
     }
 
     @PostMapping("/leave")
     public void leave() {
-        if (!network.isOnline()) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "Node is dead");
-        }
-
-        clock.log("Disconnecting from system");
+        checkOnline();
+        clock.log("Graceful leave...");
         String myId = topology.getMyId();
-
-        lomet.executeInCS(() -> {
-            lomet.handleNodeFailure(myId);
-        });
 
         for (NodeInfo n : topology.getNeighbors()) {
             network.sendPost(n.getBaseUrl() + "/api/unregister/" + myId, null);
         }
+
+        lomet.executeInCS(() -> lomet.handleNodeFailure(myId));
+
         topology.getNeighbors().clear();
     }
 
-    @PostMapping("/register-proxy")
-    public void registerProxy(@RequestBody NodeInfo newNode, @RequestHeader("X-Logical-Time") long time) {
-        if (!network.isOnline()) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "Node is dead");
-        }
-
-        clock.update(time);
-        topology.addNeighbor(newNode);
-    }
-
     @PostMapping("/unregister/{id}")
-    public void unregister(@PathVariable String id, @RequestHeader("X-Logical-Time") long remoteTime) {
-        if (!network.isOnline()) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "Node is dead");
-        }
-
-        clock.update(remoteTime);
+    public void unregister(@PathVariable String id) {
+        checkOnline();
         topology.removeNeighbor(id);
-        lomet.executeInCS(() -> {
-            lomet.handleNodeFailure(id);
-        });
+        lomet.executeInCS(() -> lomet.handleNodeFailure(id));
     }
 
-    @PostMapping("/setDelay")
-    public void setDelay(@RequestParam int value) {
-        if (!network.isOnline()) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "Node is dead");
-        }
 
-        network.setDelay(value);
+    @DeleteMapping("/kill")
+    public void kill() {
+        network.setOnline(false);
+        clock.log("Node KILLED (Communication offline)");
     }
 
     @PostMapping("/revive")
     public void revive() {
         network.setOnline(true);
-        clock.log("Node revived");
-        List<NodeInfo> oldNeighbors = topology.getNeighbors();
-        String myIp = topology.getMyId().split(":")[0];
-        NodeInfo me = new NodeInfo( myIp, getMyPort() );
-
-        for (NodeInfo neighbor : oldNeighbors) {
-            network.sendPost(neighbor.getBaseUrl() + "/api/register-proxy", me);
-        }
+        clock.log("Node REVIVED");
     }
 
-    @DeleteMapping("/kill")
-    public void kill() {
-        network.setOnline(false);
-        clock.log("Instant end(kill command)");
+
+    private void checkOnline() {
+        if (!network.isOnline()) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Node is offline");
+        }
     }
 
     private int getMyPort() {
         return Integer.parseInt(topology.getMyId().split(":")[1]);
+    }
+
+    @PostMapping("/resource/preliminary")
+    public void resPreliminary(@RequestBody List<String> resources) {
+        lomet.sendPreliminaryRequests(resources);
+    }
+
+    // ШАГ 2: Acquire (с апостериорной детекцией внутри)
+    @GetMapping("/resource/acquire")
+    public String resAcquire(@RequestParam String resourceId) {
+        boolean success = lomet.acquireResource(resourceId);
+        return success ? "SUCCESS" : "DEADLOCK_RELEASED";
+    }
+
+    @PostMapping("/resource/release")
+    public void resRelease(@RequestParam String resourceId) {
+        lomet.releaseResource(resourceId);
+    }
+
+    @PostMapping("/ra/request")
+    public void handleRaRequest(@RequestParam long time, @RequestParam String senderId) {
+        raService.onReceiveRequest(time, senderId);
+    }
+
+    @PostMapping("/ra/reply")
+    public void handleRaReply() {
+        raService.onReceiveReply();
+    }
+
+    @PostMapping("/lomet/sync")
+    public void syncLomet(@RequestBody Map<String, Object> state) {
+        lomet.sync(state);
     }
 }
