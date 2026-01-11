@@ -5,7 +5,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.locks.ReentrantLock;
 
 @Service
 public class LometService {
@@ -18,15 +17,13 @@ public class LometService {
     private final Map<String, String> resourceHolders = new ConcurrentHashMap<>();
     private final Map<String, List<String>> preliminaryMap = new ConcurrentHashMap<>();
 
-    private final ReentrantLock localLock = new ReentrantLock();
 
     public boolean executeInCS(Runnable action) {
         raService.requestCS();
         try {
             int timeout = 0;
-            // Ждем до 40 секунд (80 * 500мс)
-            while (!raService.isGranted() && timeout < 80) {
-                Thread.sleep(500); // Спим дольше для стабильности на виртуалках
+            while (!raService.isGranted() && timeout < 10) {
+                Thread.sleep(100);
                 timeout++;
             }
             if (raService.isGranted()) {
@@ -49,7 +46,6 @@ public class LometService {
     @SuppressWarnings("unchecked")
     public void sync(Map<String, Object> incoming) {
         synchronized (globalWFG) {
-            // 1. Синхронизация графа (Полная перезапись)
             List<Map<String, Object>> wfgList = (List<Map<String, Object>>) incoming.get("wfg");
             globalWFG.clear();
             if (wfgList != null) {
@@ -62,12 +58,10 @@ public class LometService {
                     globalWFG.put(edge.getFromId() + "->" + edge.getToId(), edge);
                 }
             }
-            // 2. Синхронизация владельцев
             Map<String, String> holders = (Map<String, String>) incoming.get("holders");
             resourceHolders.clear();
             if (holders != null) resourceHolders.putAll(holders);
 
-            // 3. Синхронизация намерений
             Map<String, List<String>> prelim = (Map<String, List<String>>) incoming.get("preliminary");
             preliminaryMap.clear();
             if (prelim != null) preliminaryMap.putAll(prelim);
@@ -80,7 +74,6 @@ public class LometService {
             clock.log("[LOMET] Preliminary requests for: " + resources);
             preliminaryMap.put(myId, resources);
 
-            // Если ресурсы уже кем-то заняты, сразу строим зависимости
             for (String res : resources) {
                 String holder = resourceHolders.get(res);
                 if (holder != null && !holder.equals(myId)) {
@@ -175,27 +168,36 @@ public class LometService {
 
     public void handleNodeFailure(String deadNodeId) {
         synchronized (globalWFG) {
-            List<String> targetsOfDeadNode = globalWFG.values().stream()
-                    .filter(e -> e.getFromId().equals(deadNodeId))
-                    .map(DependencyEdge::getToId)
-                    .collect(java.util.stream.Collectors.toList());
+            // bypass logic - I think it is no need of it, but I will leave it here for assurance
+//            clock.log("[LOMET] Emergency cleanup for failed node: " + deadNodeId);
+//
+//            List<String> targetsOfDeadNode = globalWFG.values().stream()
+//                    .filter(e -> e.getFromId().equals(deadNodeId))
+//                    .map(DependencyEdge::getToId)
+//                    .collect(java.util.stream.Collectors.toList());
+//
+//            List<String> waitersOfDeadNode = globalWFG.values().stream()
+//                    .filter(e -> e.getToId().equals(deadNodeId))
+//                    .map(DependencyEdge::getFromId)
+//                    .collect(java.util.stream.Collectors.toList());
+//
+//            for (String waiter : waitersOfDeadNode) {
+//                for (String target : targetsOfDeadNode) {
+//                    if (!waiter.equals(target)) {
+//                        addWaitEdge(waiter, target);
+//                        clock.log("[BYPASS] Node " + waiter + " now redirected to " + target);
+//                    }
+//                }
+//            }
 
-            List<String> waitersOfDeadNode = globalWFG.values().stream()
-                    .filter(e -> e.getToId().equals(deadNodeId))
-                    .map(DependencyEdge::getFromId)
-                    .collect(java.util.stream.Collectors.toList());
+            globalWFG.entrySet().removeIf(e ->
+                    e.getValue().getFromId().equals(deadNodeId) ||
+                            e.getValue().getToId().equals(deadNodeId)
+            );
 
-            for (String waiter : waitersOfDeadNode) {
-                for (String target : targetsOfDeadNode) {
-                    if (!waiter.equals(target)) {
-                        addWaitEdge(waiter, target);
-                        clock.log("[BYPASS] Node " + waiter + " now waiting for " + target);
-                    }
-                }
-            }
+            resourceHolders.entrySet().removeIf(entry -> entry.getValue().equals(deadNodeId));
 
-            globalWFG.entrySet().removeIf(e -> e.getValue().getFromId().equals(deadNodeId) || e.getValue().getToId().equals(deadNodeId));
-            resourceHolders.entrySet().removeIf(e -> e.getValue().equals(deadNodeId));
+            preliminaryMap.remove(deadNodeId);
         }
     }
 }

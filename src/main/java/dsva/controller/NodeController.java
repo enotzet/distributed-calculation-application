@@ -101,12 +101,21 @@ public class NodeController {
     @PostMapping("/leave")
     public void leave() {
         if (!network.isOnline()) throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE);
+
         String myId = topology.getMyId();
+        clock.log("Initiating graceful leave for " + myId);
+
+
+        lomet.executeInCS(() -> {
+            lomet.handleNodeFailure(myId);
+        });
+
         for (NodeInfo n : topology.getNeighbors()) {
             network.sendPost(n.getBaseUrl() + "/api/unregister/" + myId, null);
         }
-        lomet.executeInCS(() -> lomet.handleNodeFailure(myId));
+
         topology.getNeighbors().clear();
+        clock.log("Successfully left the system.");
     }
 
     @DeleteMapping("/kill")
@@ -138,5 +147,20 @@ public class NodeController {
 
     private int getMyPort() {
         return Integer.parseInt(topology.getMyId().split(":")[1]);
+    }
+
+    @GetMapping("/ping")
+    public String ping() {
+        if (!network.isOnline()) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Node is dead");
+        }
+        return "ok";
+    }
+
+    @PostMapping("/setDelay")
+    public void setDelay(@RequestParam int value) {
+        if (!network.isOnline()) throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE);
+        network.setDelay(value);
+        clock.log("Network delay set to " + value + "ms");
     }
 }

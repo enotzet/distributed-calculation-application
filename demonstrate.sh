@@ -27,6 +27,11 @@ sleep 2
 echo -e "\n--- STEP 2: Allocating initial resources ---"
 curl -G "http://$NODE1:$PORT/api/resource/acquire" --data-urlencode "resourceId=R1"
 curl -G "http://$NODE2:$PORT/api/resource/acquire" --data-urlencode "resourceId=R2"
+sleep 2
+
+echo "--- Killing Node 2 (103) ---"
+curl -X POST "http://$NODE2:$PORT/api/leave"
+echo "Node 2 is now offline. Waiting for other nodes to detect failure..."
 sleep 5
 
 echo -e "\n--- STEP 3: Creating Deadlock situation ---"
