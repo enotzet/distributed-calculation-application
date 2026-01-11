@@ -29,6 +29,9 @@ curl -G "http://$NODE1:$PORT/api/resource/acquire" --data-urlencode "resourceId=
 curl -G "http://$NODE2:$PORT/api/resource/acquire" --data-urlencode "resourceId=R2"
 sleep 5
 
+curl -X POST "http://$NODE1:$PORT/api/resource/release?resourceId=R1"
+sleep 5
+
 echo -e "\n--- STEP 3: Creating Deadlock situation ---"
 
 echo "P3 attempts to acquire R3 (this will trigger deadlock resolution)..."

@@ -14,35 +14,38 @@ public class RicartAgrawalaService {
     @Autowired @Lazy private NetworkService network;
 
     private boolean requestingCS = false;
-    private long requestTime = 0;
-    private final List<String> deferredReplies = new ArrayList<>();
+    private long requestTime = Long.MAX_VALUE;
+    private final Set<String> deferredReplies = Collections.synchronizedSet(new HashSet<>());
     private final AtomicInteger repliesCount = new AtomicInteger(0);
     private boolean inCS = false;
 
     public synchronized void requestCS() {
-        requestingCS = true;
-        inCS = false;
-        repliesCount.set(0);
-        requestTime = clock.tick();
-        deferredReplies.clear();
+        this.requestingCS = true;
+        this.inCS = false;
+        this.repliesCount.set(0);
+        this.requestTime = clock.tick();
+        this.deferredReplies.clear();
 
         List<NodeInfo> neighbors = topology.getNeighbors();
-        if (neighbors.isEmpty()) { inCS = true; return; }
+        if (neighbors.isEmpty()) {
+            this.inCS = true;
+            return;
+        }
 
-        clock.log("[RA] Requesting CS for WFG update. Time: " + requestTime);
+        // Рассылаем запросы
         for (NodeInfo n : neighbors) {
-            network.sendRaRequest(n.getBaseUrl(), requestTime, topology.getMyId());
+            network.sendRaRequest(n.getBaseUrl(), this.requestTime, topology.getMyId());
         }
     }
 
     public synchronized void onReceiveRequest(long remoteTime, String senderId) {
         clock.update(remoteTime);
-        // Приоритет: меньше метка времени -> меньше ID (IP:Port)
+
+        // Формула приоритета
         boolean myPriority = requestingCS &&
-                (requestTime < remoteTime || (requestTime == remoteTime && topology.getMyId().compareTo(senderId) < 0));
+                (this.requestTime < remoteTime || (this.requestTime == remoteTime && topology.getMyId().compareTo(senderId) < 0));
 
         if (inCS || myPriority) {
-            clock.log("[RA] Deferring reply to " + senderId);
             deferredReplies.add(senderId);
         } else {
             network.sendRaReply(senderId);
@@ -54,16 +57,20 @@ public class RicartAgrawalaService {
     }
 
     public synchronized boolean isGranted() {
-        return repliesCount.get() >= topology.getNeighbors().size();
+        int neighborsCount = topology.getNeighbors().size();
+        return neighborsCount == 0 || repliesCount.get() >= neighborsCount;
     }
 
     public synchronized void releaseCS() {
-        inCS = false;
-        requestingCS = false;
-        for (String nodeId : deferredReplies) {
-            network.sendRaReply(nodeId);
+        this.inCS = false;
+        this.requestingCS = false;
+        this.requestTime = Long.MAX_VALUE;
+        synchronized (deferredReplies) {
+            for (String nodeId : deferredReplies) {
+                network.sendRaReply(nodeId);
+            }
+            deferredReplies.clear();
         }
-        deferredReplies.clear();
     }
 
     public void setInCS(boolean val) { this.inCS = val; }

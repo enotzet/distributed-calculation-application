@@ -25,11 +25,20 @@ public class TopologyService {
         return host + ":" + port;
     }
 
+    public void addNeighbors(List<NodeInfo> newNodes) {
+        for (NodeInfo n : newNodes) {
+            addNeighbor(n);
+        }
+    }
 
     public void addNeighbor(NodeInfo node) {
-        if (!node.getId().equals(getMyId()) && !neighbors.contains(node)) {
-            neighbors.add(node);
-            logger.log("Neighbour added: " + node.getId() + ". Count of neighbours: " + neighbors.size());
+        if (node.getId().equals(getMyId())) return; // Защита от добавления себя
+
+        synchronized (neighbors) {
+            if (!neighbors.stream().anyMatch(n -> n.getId().equals(node.getId()))) {
+                neighbors.add(node);
+                logger.log("Neighbour added: " + node.getId() + ". Count: " + neighbors.size());
+            }
         }
     }
 
