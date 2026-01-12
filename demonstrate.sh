@@ -18,28 +18,16 @@ do
     sleep $SLEEP_TIME
 done
 
-echo "--- STEP 1: Preliminary Requests ---"
 curl -X POST "http://$NODE1:$PORT/api/resource/preliminary" -H "Content-Type: application/json" -d '["R1", "R3"]'
 curl -X POST "http://$NODE2:$PORT/api/resource/preliminary" -H "Content-Type: application/json" -d '["R2", "R1"]'
 curl -X POST "http://$NODE3:$PORT/api/resource/preliminary" -H "Content-Type: application/json" -d '["R3", "R2"]'
+
+curl "http://$NODE2:$PORT/api/resource/acquire" &
 sleep 2
 
-echo -e "\n--- STEP 2: Allocating initial resources ---"
-curl -G "http://$NODE1:$PORT/api/resource/acquire" --data-urlencode "resourceId=R1"
-curl -G "http://$NODE2:$PORT/api/resource/acquire" --data-urlencode "resourceId=R2"
+curl "http://$NODE1:$PORT/api/resource/acquire" &
 sleep 2
 
-echo "--- Killing Node 2 (103) ---"
-curl -X POST "http://$NODE2:$PORT/api/leave"
-echo "Node 2 is now offline. Waiting for other nodes to detect failure..."
-sleep 5
+curl -X POST "http://$NODE1:$PORT/api/resource/release?resourceId=R1"
 
-echo -e "\n--- STEP 3: Creating Deadlock situation ---"
-
-echo "P3 attempts to acquire R3 (this will trigger deadlock resolution)..."
-RESULT=$(curl -s -G "http://$NODE3:$PORT/api/resource/acquire" --data-urlencode "resourceId=R3")
-
-echo -e "\nResult for P3: $RESULT"
-if [ "$RESULT" == "DEADLOCK_RELEASED" ]; then
-    echo "Lomet detected deadlock and forced P3 to release R3!"
-fi
+#curl "http://$NODE2:$PORT/api/resource/acquire"

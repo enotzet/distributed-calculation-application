@@ -66,22 +66,17 @@ public class NodeController {
     }
 
     @PostMapping("/resource/preliminary")
-    public void resPreliminary(@RequestBody List<String> resources) {
-        if (!network.isOnline()) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "Node is offline"
-            );
-        }
-
-        lomet.sendPreliminaryRequests(resources);
+    public String resPreliminary(@RequestBody List<String> resources) {
+        if (!network.isOnline()) throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE);
+        boolean safe = lomet.sendPreliminaryRequests(resources);
+        return safe ? "PRELIMINARY_OK" : "PRELIMINARY_DEADLOCK_DENIED";
     }
 
     @GetMapping("/resource/acquire")
-    public String resAcquire(@RequestParam String resourceId) {
+    public String resAcquire() {
         if (!network.isOnline()) throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE);
-        boolean success = lomet.acquireResource(resourceId);
-        // Возвращаем результат для скрипта
-        return success ? "SUCCESS" : "DEADLOCK_RELEASED";
+
+        return lomet.acquirePreliminaryResources();
     }
 
     @PostMapping("/resource/release")

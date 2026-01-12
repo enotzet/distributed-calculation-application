@@ -5,6 +5,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 
 @Service
 public class LometService {
@@ -15,14 +16,16 @@ public class LometService {
 
     private final Map<String, DependencyEdge> globalWFG = new ConcurrentHashMap<>();
     private final Map<String, String> resourceHolders = new ConcurrentHashMap<>();
+    private final Map<String, Long> preliminaryTimestamps = new ConcurrentHashMap<>();
     private final Map<String, List<String>> preliminaryMap = new ConcurrentHashMap<>();
 
+    private final ReentrantLock localLock = new ReentrantLock();
 
-    public boolean executeInCS(Runnable action) {
+    public void executeInCS(Runnable action) {
         raService.requestCS();
         try {
             int timeout = 0;
-            while (!raService.isGranted() && timeout < 10) {
+            while (!raService.isGranted() && timeout < 100) {
                 Thread.sleep(100);
                 timeout++;
             }
@@ -31,104 +34,211 @@ public class LometService {
                 action.run();
                 broadcastGlobalState();
                 raService.releaseCS();
-                return true;
-            } else {
-                clock.log("[RA] FAILED: Timeout. Replies: " + raService.isGranted());
-                raService.releaseCS();
-                return false;
             }
-        } catch (Exception e) {
-            raService.releaseCS();
-            return false;
-        }
+        } catch (Exception e) { e.printStackTrace(); }
     }
 
-    @SuppressWarnings("unchecked")
-    public void sync(Map<String, Object> incoming) {
-        synchronized (globalWFG) {
-            List<Map<String, Object>> wfgList = (List<Map<String, Object>>) incoming.get("wfg");
-            globalWFG.clear();
-            if (wfgList != null) {
-                for (Map<String, Object> e : wfgList) {
-                    DependencyEdge edge = new DependencyEdge(
-                            (String)e.get("fromId"),
-                            (String)e.get("toId"),
-                            ((Number)e.get("logicalTime")).longValue()
-                    );
-                    globalWFG.put(edge.getFromId() + "->" + edge.getToId(), edge);
-                }
-            }
-            Map<String, String> holders = (Map<String, String>) incoming.get("holders");
-            resourceHolders.clear();
-            if (holders != null) resourceHolders.putAll(holders);
-
-            Map<String, List<String>> prelim = (Map<String, List<String>>) incoming.get("preliminary");
-            preliminaryMap.clear();
-            if (prelim != null) preliminaryMap.putAll(prelim);
-        }
-    }
-
-    public void sendPreliminaryRequests(List<String> resources) {
+    public boolean sendPreliminaryRequests(List<String> resources) {
         String myId = topology.getMyId();
+        final boolean[] isSafe = {true};
+
         executeInCS(() -> {
-            clock.log("[LOMET] Preliminary requests for: " + resources);
+            long myRequestTime = clock.tick();
+            preliminaryTimestamps.put(myId, myRequestTime);
             preliminaryMap.put(myId, resources);
 
-            for (String res : resources) {
-                String holder = resourceHolders.get(res);
-                if (holder != null && !holder.equals(myId)) {
-                    addWaitEdge(myId, holder);
+            clock.log("[LOMET] Building dependency graph for intents: " + resources);
+            rebuildWFG();
+
+            if (detectDeadlock()) {
+                clock.log("!!! DEADLOCK PREVENTED !!! Rejecting preliminary request.");
+                preliminaryMap.remove(myId);
+                preliminaryTimestamps.remove(myId);
+                rebuildWFG(); // Откатываем граф
+                isSafe[0] = false;
+            }
+        });
+        return isSafe[0];
+    }
+
+    private void rebuildWFG() {
+        globalWFG.clear();
+
+        Map<String, String> effectiveHolders = new HashMap<>(resourceHolders);
+
+        preliminaryMap.forEach((nodeId, resources) -> {
+            if (resources != null && !resources.isEmpty()) {
+                String primaryResource = resources.get(0);
+                effectiveHolders.putIfAbsent(primaryResource, nodeId);
+            }
+        });
+
+        preliminaryMap.forEach((p_i, wantedResources) -> {
+            for (String res : wantedResources) {
+                String holder = effectiveHolders.get(res);
+
+                if (holder != null && !holder.equals(p_i)) {
+                    addWaitEdge(p_i, holder, res);
+                } else if (holder == null) {
+                    preliminaryMap.forEach((p_j, otherWanted) -> {
+                        Long tsI = preliminaryTimestamps.get(p_i);
+                        Long tsJ = preliminaryTimestamps.get(p_j);
+
+                        if (!p_i.equals(p_j) && otherWanted.contains(res) && tsI != null && tsJ != null) {
+                            if (tsI > tsJ) {
+                                addWaitEdge(p_i, p_j, res);
+                            }
+                        }
+                    });
                 }
             }
         });
     }
 
-    public boolean acquireResource(String resId) {
+    public String acquirePreliminaryResources() {
         String myId = topology.getMyId();
-        final boolean[] success = {true};
+        List<String> myWanted = preliminaryMap.get(myId);
+        if (myWanted == null) return "NO_PRELIMINARY_INTENTS";
 
-        boolean entered = executeInCS(() -> {
-            clock.log("[LOMET] Attempting to acquire: " + resId);
-            Map<String, DependencyEdge> backupWFG = new HashMap<>(globalWFG);
-            Map<String, String> backupHolders = new HashMap<>(resourceHolders);
+        clock.log("[ACQUIRE] Starting partial acquisition for: " + myWanted);
 
-            resourceHolders.put(resId, myId);
-            preliminaryMap.forEach((waiterId, wantedResources) -> {
-                if (!waiterId.equals(myId) && wantedResources.contains(resId)) {
-                    addWaitEdge(waiterId, myId);
+        while (true) {
+            final List<String> missingResources = new ArrayList<>();
+            final boolean[] acquiredSomethingNew = {false};
+
+            executeInCS(() -> {
+                for (String res : myWanted) {
+                    String currentHolder = resourceHolders.get(res);
+
+                    if (myId.equals(currentHolder)) {
+                        continue;
+                    }
+
+                    if (currentHolder != null) {
+                        missingResources.add(res);
+                        continue;
+                    }
+
+                    boolean someoneElseHasPriority = preliminaryMap.entrySet().stream()
+                            .anyMatch(entry -> {
+                                String otherId = entry.getKey();
+                                Long otherTs = preliminaryTimestamps.get(otherId);
+                                Long myTs = preliminaryTimestamps.get(myId);
+
+                                // Если данных о времени нет - не уступаем
+                                if (otherTs == null || myTs == null) return false;
+
+                                return !otherId.equals(myId) &&           // Не мы
+                                        entry.getValue().contains(res) && // Хочет этот же ресурс
+                                        otherTs < myTs &&                 // Пришел раньше нас
+                                        !otherId.equals(resourceHolders.get(res)); // И еще не владеет им
+                            });
+
+                    if (!someoneElseHasPriority) {
+                        resourceHolders.put(res, myId);
+                        clock.log("[LOMET] Partial acquisition success: " + res);
+                        acquiredSomethingNew[0] = true;
+                    } else {
+                        missingResources.add(res);
+                    }
+                }
+
+                if (acquiredSomethingNew[0]) {
+                    rebuildWFG();
                 }
             });
 
-            if (detectDeadlock()) {
-                clock.log("!!! DEADLOCK DETECTED !!! Rolling back " + resId);
-                globalWFG.clear();
-                globalWFG.putAll(backupWFG);
-                resourceHolders.clear();
-                resourceHolders.putAll(backupHolders);
-                success[0] = false;
-            } else {
-                clock.log("[LOMET] " + resId + " acquired successfully.");
+            if (missingResources.isEmpty()) {
+                clock.log("[ACQUIRE] All resources acquired successfully.");
+                return "SUCCESS";
             }
-        });
 
-        return entered && success[0];
+            clock.log("[POLLING] Holding some, waiting for others: " + missingResources);
+
+            for (String res : missingResources) {
+                String holderId = resourceHolders.get(res);
+
+                if (holderId != null && !holderId.equals(myId)) {
+                    boolean isAlive = network.pingNode(holderId);
+                    if (!isAlive) {
+                        clock.log("!!! DETECTED DEAD HOLDER: " + holderId + " on resource " + res);
+                        network.reportFailure(holderId);
+                        break;
+                    }
+                }
+            }
+
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return "INTERRUPTED";
+            }
+        }
+    }
+
+
+    @SuppressWarnings("unchecked")
+    public void sync(Map<String, Object> incoming) {
+        if (incoming == null) return;
+
+        synchronized (globalWFG) {
+            Map<String, String> holders = (Map<String, String>) incoming.get("holders");
+            if (holders != null) {
+                resourceHolders.clear();
+                resourceHolders.putAll(holders);
+            }
+
+            Map<String, List<String>> prelim = (Map<String, List<String>>) incoming.get("preliminary");
+            if (prelim != null) {
+                preliminaryMap.clear();
+                preliminaryMap.putAll(prelim);
+            }
+
+            Map<String, Object> ts = (Map<String, Object>) incoming.get("timestamps");
+            if (ts != null) {
+                preliminaryTimestamps.clear();
+                ts.forEach((k, v) -> {
+                    if (v != null) {
+                        preliminaryTimestamps.put(k, ((Number) v).longValue());
+                    }
+                });
+            }
+
+            rebuildWFG();
+        }
     }
 
     public void releaseResource(String resId) {
+        String myId = topology.getMyId();
         executeInCS(() -> {
-            internalReleaseLogic(resId);
-        });
-    }
+            if (myId.equals(resourceHolders.get(resId))) {
+                resourceHolders.remove(resId);
 
-    private void internalReleaseLogic(String resId) {
-        resourceHolders.remove(resId);
-        globalWFG.entrySet().removeIf(e -> e.getValue().getToId().equals(topology.getMyId()));
-        clock.log("[LOMET] Released resource: " + resId);
+                globalWFG.entrySet().removeIf(e -> e.getValue().getToId().equals(myId));
+
+
+                List<String> intents = preliminaryMap.get(myId);
+                if (intents != null) {
+                    intents.remove(resId); // Удаляем конкретный ресурс
+
+                    if (intents.isEmpty()) {
+                        preliminaryMap.remove(myId);
+                        preliminaryTimestamps.remove(myId);
+                    } else {
+                        preliminaryMap.put(myId, intents);
+                    }
+                }
+
+                clock.log("[LOMET] Released resource: " + resId);
+            }
+        });
     }
 
     private boolean detectDeadlock() {
         Map<String, List<String>> adj = new HashMap<>();
         synchronized (globalWFG) {
+            if (globalWFG.isEmpty()) return false;
             globalWFG.values().forEach(e ->
                     adj.computeIfAbsent(e.getFromId(), k -> new ArrayList<>()).add(e.getToId()));
         }
@@ -148,8 +258,8 @@ public class LometService {
         }
     }
 
-    private void addWaitEdge(String from, String to) {
-        globalWFG.put(from + "->" + to, new DependencyEdge(from, to, clock.tick()));
+    private void addWaitEdge(String from, String to, String res) {
+        globalWFG.put(from + "->" + to + ":" + res, new DependencyEdge(from, to, res, clock.getTime()));
     }
 
     private List<String> findCycle(String curr, Map<String, List<String>> adj, Set<String> visited, LinkedHashSet<String> stack) {

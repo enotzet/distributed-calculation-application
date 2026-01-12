@@ -15,5 +15,7 @@ public class DependencyEdge {
     @EqualsAndHashCode.Include
     private String toId;
 
+    private String resourceId;
+
     private long logicalTime;
 }

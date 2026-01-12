@@ -81,4 +81,16 @@ public class NetworkService {
             }
         }
     }
+
+    public boolean pingNode(String nodeId) {
+        NodeInfo node = topologyService.getNeighborById(nodeId);
+        if (node == null) return false;
+
+        try {
+            rest.getForObject(node.getBaseUrl() + "/api/ping", String.class);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
 }
